@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #0B0F17;
+    color: #F8FAFC;
+    overflow-x: hidden;
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* React Flow dark aerospace console overrides */
+.react-flow__attribution {
+  background: rgba(15, 23, 42, 0.75) !important;
+  color: #64748B !important;
+  font-size: 10px !important;
+}
+
+.react-flow__controls {
+  border: 1px solid #1E293B !important;
+  background: #0F172A !important;
+  box-shadow: none !important;
+}
+
+.react-flow__controls-button {
+  background: #0F172A !important;
+  border-bottom: 1px solid #1E293B !important;
+  fill: #94A3B8 !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #1E293B !important;
+  fill: #F8FAFC !important;
+}
+
+@media print {
+  body {
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "AeroCascade — Remote Tower Cybersecurity & Cascading Failure Simulator",
+  "description": "Interactive discrete-event simulation engine and tripartite cybersecurity risk modeling platform for Remote Tower Operations (Aggarwal & Dhillon, AIAA Aviation 2026), integrating Dhillon & Moores (2001) controls, FMEA RPN quantification, EASA Part-IS, EUROCAE ER-040, and PSOE maturity assessment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
