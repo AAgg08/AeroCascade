@@ -177,4 +177,4 @@ The console includes four policy presets for comparative analysis:
 
 This simulator operationalizes the conceptual framework, tripartite governance controls, and qualitative failure models introduced in:
 
-> Aryan Aggarwal and Balbir S. Dhillon, **“Modernizing Aviation Infrastructure—Cybersecurity Challenges in the Era of Remote Tower Operations,”** AIAA Aviation 2026 Forum.
+> Aryan Aggarwal and Gurpreet Dhillon, **“Modernizing Aviation Infrastructure—Cybersecurity Challenges in the Era of Remote Tower Operations,”** AIAA Aviation 2026 Forum.
