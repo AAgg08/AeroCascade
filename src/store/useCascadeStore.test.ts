@@ -434,4 +434,108 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(afterRunRev, afterRunSimRev, 'After simulation, result revision matches input revision (fresh)');
     assert.equal(useCascadeStore.getState().simulationResult.run_id, 'run-rev-updated');
   });
+
+  await t.test('Hero metrics and badges update when scenario or run changes', async () => {
+    // 1. Initial State: Scenario I (48 mvmt/hr)
+    assert.equal(useCascadeStore.getState().activeScenarioId, 'rtc-optical-asmgcs-spoof');
+    assert.equal(useCascadeStore.getState().baselineMovementsPerHour, 48);
+    const initialKpis = useCascadeStore.getState().simulationResult.summary_kpis;
+    assert.ok(initialKpis.min_hourly_capacity > 0);
+
+    // 2. Change Scenario to Scenario II (60 mvmt/hr)
+    useCascadeStore.getState().selectScenario('swim-amhs-flight-object-lockout');
+    const scenario2State = useCascadeStore.getState();
+    assert.equal(scenario2State.activeScenarioId, 'swim-amhs-flight-object-lockout');
+    assert.equal(scenario2State.baselineMovementsPerHour, 60, 'Baseline movements must update to 60 for Scenario II');
+    assert.equal(scenario2State.triggerHour, 3, 'Trigger hour must update to 3 for Scenario II');
+
+    // Check that hero KPIs have updated for the new scenario
+    const scenario2Kpis = scenario2State.simulationResult.summary_kpis;
+    assert.ok(scenario2Kpis, 'KPIs must exist for Scenario II');
+    assert.equal(
+      scenario2State.inputRevision,
+      scenario2State.simulationResult.provenance?.input_revision,
+      'Scenario switch immediately produces fresh client preview (not stale)'
+    );
+
+    // 3. Run Deterministic Simulation on Server
+    const mockAuthResponse: Partial<SimulationResponse> = {
+      ...structuredClone(scenario2State.simulationResult),
+      run_id: 'auth-run-scenario-2',
+      summary_kpis: {
+        ...scenario2Kpis,
+        min_hourly_capacity: 35.0,
+        total_disrupted_movements: 120,
+      },
+      provenance: {
+        engine: 'fastapi-python',
+        engine_label: 'FastAPI + SimPy (Authoritative Engine)',
+        model_version: '2.0.0-causal',
+        input_revision: scenario2State.inputRevision,
+        generated_at: new Date().toISOString(),
+        is_fallback: false,
+      },
+    };
+
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify(mockAuthResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    await useCascadeStore.getState().executeSimulationOnServer();
+    const afterDeterministicState = useCascadeStore.getState();
+    assert.equal(
+      afterDeterministicState.simulationResult.provenance?.engine,
+      'fastapi-python',
+      'Engine badge must reflect authoritative FastAPI engine'
+    );
+    assert.equal(
+      afterDeterministicState.simulationResult.summary_kpis.min_hourly_capacity,
+      35.0,
+      'Hero metric min capacity must update to authoritative result'
+    );
+    assert.equal(
+      afterDeterministicState.simulationResult.summary_kpis.total_disrupted_movements,
+      120,
+      'Hero metric disrupted movements must update'
+    );
+
+    // 4. Run Monte Carlo Simulation (30 Replicates)
+    const mockMonteCarloResponse: Partial<SimulationResponse> = {
+      ...mockAuthResponse,
+      run_id: 'mc-run-scenario-2',
+      replicates: 30,
+      hourly_capacity: scenario2State.simulationResult.hourly_capacity.map((pt) => ({
+        ...pt,
+        capacity_5th: (pt.tripartite_mitigated_capacity ?? 30) - 4,
+        capacity_median: pt.tripartite_mitigated_capacity ?? 30,
+        capacity_95th: (pt.tripartite_mitigated_capacity ?? 30) + 3,
+      })),
+    };
+
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify(mockMonteCarloResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    await useCascadeStore.getState().executeSimulationOnServer({ replicates: 30 });
+    const afterMonteCarloState = useCascadeStore.getState();
+    assert.equal(
+      afterMonteCarloState.simulationResult.replicates,
+      30,
+      'Monte Carlo replicates badge must reflect 30 replicates'
+    );
+    assert.ok(
+      afterMonteCarloState.simulationResult.hourly_capacity[0].capacity_5th !== undefined,
+      '5th percentile band must be present for Monte Carlo run'
+    );
+    assert.ok(
+      afterMonteCarloState.simulationResult.hourly_capacity[0].capacity_95th !== undefined,
+      '95th percentile band must be present for Monte Carlo run'
+    );
+  });
 });
