@@ -1,12 +1,17 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Activity,
   AlertCircle,
+  Briefcase,
+  ChevronRight,
+  DollarSign,
   FileText,
   Network,
   RotateCw,
   ShieldCheck,
+  Sparkles,
   Terminal,
+  X,
 } from 'lucide-react';
 import { EASAComplianceView } from './components/EASAComplianceView.tsx';
 import { FMEACapacityAnalytics } from './components/FMEACapacityAnalytics.tsx';
@@ -42,6 +47,7 @@ export default function App() {
 
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
   const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
+  const [showVcTour, setShowVcTour] = useState(false);
 
   useEffect(() => {
     const handleHash = () => {
@@ -129,6 +135,15 @@ export default function App() {
             <div className="hidden lg:flex items-center gap-2 rounded-full bg-gray-50 border border-gray-200/60 px-4 py-1.5 text-xs text-gray-500 shadow-inner">
               <span>AIAA 2026 Reference Model · Dhillon &amp; Moores (2001)</span>
             </div>
+            <button
+              type="button"
+              data-testid="vc-tour-btn"
+              onClick={() => setShowVcTour(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-200/80 px-3.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100/80 transition-all shadow-xs"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+              <span>VC Demo Guide</span>
+            </button>
           </div>
 
           {/* Header Action Controls */}
@@ -307,9 +322,19 @@ export default function App() {
                   <span className="font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
                     {kpis.capacity_retention_pct.toFixed(1)}% nominal capacity floor
                   </span>
-                  <span className="text-gray-500 font-medium">
-                    {lostCapacity} estimated lost movements
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-gray-500 font-medium">
+                      {lostCapacity} estimated lost movements
+                    </span>
+                    {lostCapacity > 0 && (
+                      <span
+                        className="font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 text-[11px]"
+                        title="Direct airline delay & passenger disruption cost calculated at standard $7,500/movement benchmark"
+                      >
+                        ≈ ${( (lostCapacity * 7500) / 1_000_000 ).toFixed(1)}M est. disruption
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {/* Horizontal progress bar with smooth vibrant gradient */}
                 <div className="relative h-7 w-full rounded-full bg-gray-100/80 shadow-inner overflow-hidden p-1 flex items-center">
@@ -405,6 +430,141 @@ export default function App() {
           </div>
         </footer>
       </div>
+
+      {/* VC Analyst Demo Walkthrough Modal */}
+      {showVcTour && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="vc-tour-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-xs transition-opacity"
+        >
+          <div className="relative w-full max-w-2xl rounded-3xl bg-white p-6 sm:p-8 shadow-2xl border border-gray-100 space-y-6">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-5">
+              <div>
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-100 px-3 py-0.5 text-xs font-semibold text-indigo-700 mb-2">
+                  <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+                  VC Demo &amp; Investment Overview
+                </div>
+                <h2 id="vc-tour-title" className="text-xl font-bold text-gray-900 tracking-tight">
+                  AeroCascade: Resiliency Digital Twin for Critical Aviation Infrastructure
+                </h2>
+                <p className="text-xs text-gray-500 mt-1">
+                  Predicting and mitigating multi-million dollar cascading capacity collapse in Remote Tower Centres (RTC)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVcTour(false)}
+                className="rounded-full p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                aria-label="Close VC Tour Modal"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Core Value Proposition Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">The Market Need</span>
+                <div className="text-xs font-bold text-gray-900">$4.8B Aviation Shift</div>
+                <p className="text-[11px] text-gray-500 leading-snug">
+                  ANSPs are centralizing air traffic towers into multi-aerodrome digital centres, introducing massive cyber-physical fragility.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">The Tech Moat</span>
+                <div className="text-xs font-bold text-gray-900">Causal SimPy Engine</div>
+                <p className="text-[11px] text-gray-500 leading-snug">
+                  Traditional IT firewalls miss physical dependency cascades. AeroCascade simulates 3-stage failure and 30-rep Monte Carlo spreads.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
+                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Regulatory Catalyst</span>
+                <div className="text-xs font-bold text-gray-900">EASA Part-IS Mandate</div>
+                <p className="text-[11px] text-gray-500 leading-snug">
+                  EU 2022/1645 &amp; 2023/203 make cyber resilience audits and 72-hour incident reporting legally mandatory by 2026.
+                </p>
+              </div>
+            </div>
+
+            {/* 3-Step Clickable Demo Flow */}
+            <div className="space-y-2.5">
+              <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Recommended 3-Minute Demo Sequence</span>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('topology');
+                  setShowVcTour(false);
+                }}
+                className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/40 text-left transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="h-7 w-7 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                  <div>
+                    <div className="text-xs font-bold text-gray-900 group-hover:text-indigo-700">Explore Cyber-Physical Failure Propagation</div>
+                    <div className="text-[11px] text-gray-500">Show how Stage 1 optical spoofing cascades into Stage 2 sector overload and Stage 3 controller distrust.</div>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-indigo-600 shrink-0" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('fmea-capacity');
+                  executeSimulationOnServer({ replicates: 30 });
+                  setShowVcTour(false);
+                }}
+                className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-gray-100 hover:border-purple-200 hover:bg-purple-50/40 text-left transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="h-7 w-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                  <div>
+                    <div className="text-xs font-bold text-gray-900 group-hover:text-purple-700">Quantify Runway Capacity Collapse (Monte Carlo)</div>
+                    <div className="text-[11px] text-gray-500">Show Chart 02's 5th–95th percentile confidence band across 30 stochastic replicates and calculate $1.4M+ in mitigated disruption.</div>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-purple-600 shrink-0" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('easa-compliance');
+                  setShowVcTour(false);
+                }}
+                className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-gray-100 hover:border-emerald-200 hover:bg-emerald-50/40 text-left transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="h-7 w-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                  <div>
+                    <div className="text-xs font-bold text-gray-900 group-hover:text-emerald-700">Automate EASA Part-IS Regulatory Filing</div>
+                    <div className="text-[11px] text-gray-500">Demonstrate instant JSON risk register export and executive print-ready dossier complying with Art. IS.I.OR.230.</div>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-emerald-600 shrink-0" />
+              </button>
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-xs">
+              <div className="text-gray-500">
+                <span className="font-semibold text-gray-700">Pricing Model:</span> $180k–$450k ACV Enterprise SaaS per aerodrome cluster
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVcTour(false)}
+                className="rounded-full bg-gray-900 px-5 py-2 font-semibold text-white hover:bg-black transition-colors"
+              >
+                Got It, Let's Demo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
