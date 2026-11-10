@@ -449,6 +449,14 @@ export function runDiscreteEventSimulation(req: SimulationInputParams): Simulati
 
   return {
     scenario_id: req.scenario_id,
+    input_snapshot: {
+      scenario_id: req.scenario_id,
+      horizon_hours: req.horizon_hours,
+      baseline_movements_per_hour: req.baseline_movements_per_hour,
+      trigger_hour: req.trigger_hour,
+      nodes: req.nodes,
+      edges: req.edges,
+    },
     summary_kpis: {
       mean_raw_rpn: Number(meanRawRpn.toFixed(1)),
       mean_residual_rpn: Number(meanResidualRpn.toFixed(1)),
