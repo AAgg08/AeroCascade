@@ -132,11 +132,11 @@ This script demonstrates an end-to-end evaluation using **Scenario I: Optical Pa
    - AeroCascade intentionally preserves the previous run's measured outputs and capacity denominator (`/ 48`) so unsubmitted edits cannot be mistaken for completed simulation results.
 3. **Rerun Simulation**:
    - Click **Run Simulation to Update** (or **Run Monte Carlo (30 Reps)**).
-   - The backend simulates the adjusted policy settings. Compare the updated capacity recovery curve and residual RPN with the previous baseline run.
-4. **Inspect the EASA Part-IS Exercise Dossier**:
+   - The backend simulates the adjusted policy settings.
+   - *Measured Scenario I Example (simulated results)*: Both policies reached 12/48 movements/hour minimum capacity. `Scenario Baseline` reached sustained recovery at $T+21.22\text{ h}$ and lost an estimated 619.92 movements of capacity, versus $T+15.88\text{ h}$ and 427.68 movements under `Tripartite Balanced`.
+4. **Inspect the EASA Part-IS Exercise Dossier UI**:
    - Navigate to the **Part-IS Dossier** tab (`#easa-compliance`).
-   - Review the exercise draft notification (`EASA-PART-IS-RTC-OPTICAL-ASMGCS-SPOOF-2026-EXERCISE-DRAFT`), framed under the three-stage reporting cadence of EASA IS.I.OR.230 (Immediate Notification, 72-Hour Report, and Post-Investigation Follow-Up).
-   - Review the illustrative 5×5 screening matrix and PSOE (*Present, Suitable, Operational, Effective*) maturity progression.
+   - Review the exercise draft notification layout (`EASA-PART-IS-RTC-OPTICAL-ASMGCS-SPOOF-2026-EXERCISE-DRAFT`), which presents the three-stage reporting cards (Immediate Notification, 72-Hour Initial Report, and Post-Investigation Follow-Up), an illustrative 5×5 screening matrix, and PSOE (*Present, Suitable, Operational, Effective*) maturity progression chips.
 5. **Export Exercise Draft Deliverables**:
    - Click **Export Exercise JSON**: Downloads the structured simulation run artifact, including configuration parameters, KPIs, and risk registers.
    - Click **Print Exercise Dossier**: Opens a clean, print-formatted layout of the exercise draft suitable for archival or offline review.
@@ -147,8 +147,8 @@ This script demonstrates an end-to-end evaluation using **Scenario I: Optical Pa
 
 AeroCascade is designed for deterministic and stochastic experiment reproducibility:
 
-- **Deterministic Runs (`replicates: 1`)**: Re-executing a scenario with identical node inputs, baseline demand, and trigger parameters produces identical discrete-event execution sequences and hourly capacity metrics.
-- **Monte Carlo Runs (`replicates > 1`)**: Stochastic sampling uses a configurable random seed (`random_seed: int = 42` by default in simulation requests). Holding the scenario, input parameters, replicate count, and random seed constant guarantees reproducible percentile bands and summary distributions.
+- **Deterministic Runs (`replicates: 1`)**: Replaying a simulation requires the same engine version, scenario inputs, baseline demand, and trigger parameters to produce identical discrete-event execution sequences and hourly capacity metrics. Run-specific metadata such as the run ID and timestamp can differ.
+- **Monte Carlo Runs (`replicates > 1`)**: Stochastic sampling uses a configurable random seed (`random_seed: int = 2026` by default in `backend/models.py`). Replaying stochastic outcomes requires matching the engine version, scenario inputs, replicate count, and seed. Run-specific metadata such as run IDs can differ while statistical percentile bands and capacity distributions remain identical.
 
 ---
 
@@ -170,3 +170,11 @@ The console includes four policy presets for comparative analysis:
 2. **Technical-Only Bias** (`technical-heavy`): High investment in technical detection (88%), while formal procedures (32%) and informal human factors (28%) remain under-resourced.
 3. **Tripartite Balanced** (`tripartite-balanced`): Balanced tripartite control allocation (82%–86%) across technical, formal, and informal mechanisms.
 4. **Unmitigated Stress** (`unmitigated-stress`): Degraded control posture across all three dimensions (18%–25%) modeling worst-case resilience deficit.
+
+---
+
+## Attribution
+
+This simulator operationalizes the conceptual framework, tripartite governance controls, and qualitative failure models introduced in:
+
+> Aryan Aggarwal and Balbir S. Dhillon, **“Modernizing Aviation Infrastructure—Cybersecurity Challenges in the Era of Remote Tower Operations,”** AIAA Aviation 2026 Forum.

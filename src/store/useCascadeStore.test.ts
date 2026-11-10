@@ -448,7 +448,7 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(scenario2State.activeScenarioId, 'swim-amhs-flight-object-lockout');
     assert.equal(scenario2State.baselineMovementsPerHour, 60, 'Baseline movements must update to 60 for Scenario II');
     assert.equal(scenario2State.triggerHour, 3, 'Trigger hour must update to 3 for Scenario II');
-    
+
     // Check that hero KPIs have updated for the new scenario
     const scenario2Kpis = scenario2State.simulationResult.summary_kpis;
     assert.ok(scenario2Kpis, 'KPIs must exist for Scenario II');
