@@ -39,7 +39,11 @@ export function TopologyWorkspace() {
     setTriggerHour,
     executeSimulationOnServer,
     isSimulating,
+    activeRunMode,
   } = useCascadeStore();
+
+  const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
+  const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
 
   const activeScenario = useMemo(
     () => scenarios.find((s) => s.id === activeScenarioId) ?? scenarios[0],
@@ -115,28 +119,28 @@ export function TopologyWorkspace() {
               <button
                 type="button"
                 onClick={() => applyGlobalPreset('baseline')}
-                className="rounded px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0"
+                className="rounded px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
               >
                 Scenario Baseline
               </button>
               <button
                 type="button"
                 onClick={() => applyGlobalPreset('technical-heavy')}
-                className="rounded px-2.5 py-1.5 text-xs font-medium text-amber-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+                className="rounded px-2.5 py-1.5 text-xs font-medium text-amber-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               >
                 Technical-Only Bias
               </button>
               <button
                 type="button"
                 onClick={() => applyGlobalPreset('tripartite-balanced')}
-                className="rounded px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+                className="rounded px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               >
                 Tripartite Balanced
               </button>
               <button
                 type="button"
                 onClick={() => applyGlobalPreset('unmitigated-stress')}
-                className="rounded px-2.5 py-1.5 text-xs font-medium text-rose-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+                className="rounded px-2.5 py-1.5 text-xs font-medium text-rose-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
               >
                 Unmitigated Stress
               </button>
@@ -172,7 +176,7 @@ export function TopologyWorkspace() {
                   key={n.id}
                   type="button"
                   onClick={() => selectNode(n.id)}
-                  className={`rounded px-2 py-1 text-[11px] font-mono transition-colors whitespace-nowrap shrink-0 ${
+                  className={`rounded px-2 py-1 text-[11px] font-mono transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
                     active
                       ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/50 font-semibold'
                       : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
@@ -184,8 +188,8 @@ export function TopologyWorkspace() {
             })}
           </div>
 
-          {/* React Flow v12 Canvas */}
-          <div className="relative h-[640px] w-full bg-[#090D14]" data-testid="cascade-flow-canvas">
+          {/* React Flow v12 Canvas - Responsive height */}
+          <div className="relative h-[440px] sm:h-[540px] xl:h-[640px] w-full bg-[#090D14]" data-testid="cascade-flow-canvas">
             <ReactFlow
               key={activeScenarioId}
               nodes={flowNodes}
@@ -224,7 +228,7 @@ export function TopologyWorkspace() {
                   value={baselineMovementsPerHour}
                   onChange={(e) => setBaselineMovements(Number(e.target.value))}
                   aria-label="Baseline airport movements per hour"
-                  className="w-16 rounded border border-slate-700 bg-[#0B0F17] px-2 py-0.5 text-right text-slate-100"
+                  className="w-16 rounded border border-slate-700 bg-[#0B0F17] px-2 py-0.5 text-right text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                 />
               </label>
               <label className="flex items-center gap-2">
@@ -236,7 +240,7 @@ export function TopologyWorkspace() {
                   value={triggerHour}
                   onChange={(e) => setTriggerHour(Number(e.target.value))}
                   aria-label="Simulation trigger hour"
-                  className="w-14 rounded border border-slate-700 bg-[#0B0F17] px-2 py-0.5 text-right text-slate-100"
+                  className="w-14 rounded border border-slate-700 bg-[#0B0F17] px-2 py-0.5 text-right text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                 />
               </label>
             </div>
@@ -518,18 +522,24 @@ export function TopologyWorkspace() {
                   data-testid="inspector-simulate-btn"
                   onClick={() => executeSimulationOnServer()}
                   disabled={isSimulating}
-                  className="w-full rounded bg-cyan-500 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors"
+                  className="inline-flex items-center justify-center gap-1.5 w-full rounded bg-cyan-500 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                 >
-                  {isSimulating ? 'Simulating...' : 'Simulate'}
+                  {isDeterministicBusy && (
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+                  )}
+                  <span>{isDeterministicBusy ? 'Simulating...' : 'Simulate'}</span>
                 </button>
                 <button
                   type="button"
                   data-testid="inspector-monte-carlo-btn"
                   onClick={() => executeSimulationOnServer({ replicates: 30 })}
                   disabled={isSimulating}
-                  className="w-full rounded border border-purple-500/70 bg-purple-950/70 py-1.5 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors"
+                  className="inline-flex items-center justify-center gap-1.5 w-full rounded border border-purple-500/70 bg-purple-950/70 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
                 >
-                  {isSimulating ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}
+                  {isMonteCarloBusy && (
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-purple-200 border-t-transparent" />
+                  )}
+                  <span>{isMonteCarloBusy ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}</span>
                 </button>
               </div>
             </div>

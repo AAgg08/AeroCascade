@@ -30,7 +30,13 @@ export function FMEACapacityAnalytics() {
     triggerHour,
     executeSimulationOnServer,
     isSimulating,
+    activeRunMode,
+    inputRevision,
   } = useCascadeStore();
+
+  const isStale = inputRevision > (simulationResult.provenance?.input_revision ?? 0);
+  const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
+  const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
 
   const isStochastic = Boolean(
     simulationResult.replicates &&
@@ -40,18 +46,26 @@ export function FMEACapacityAnalytics() {
       )
   );
 
+  const triggerTimeLabel = `T+${String(triggerHour).padStart(2, '0')}:00`;
+
   const capacityChartData = useMemo(() => {
-    return simulationResult.hourly_capacity.map((pt) => ({
-      ...pt,
-      confidence_band:
-        pt.capacity_5th !== undefined && pt.capacity_95th !== undefined
-          ? [pt.capacity_5th, pt.capacity_95th]
-          : undefined,
-      primary_capacity:
-        isStochastic && pt.capacity_median !== undefined
-          ? pt.capacity_median
-          : pt.tripartite_mitigated_capacity,
-    }));
+    return simulationResult.hourly_capacity.map((pt) => {
+      const normalizedLabel = pt.time_label?.startsWith('T+')
+        ? pt.time_label
+        : `T+${String(pt.hour).padStart(2, '0')}:00`;
+      return {
+        ...pt,
+        time_label: normalizedLabel,
+        confidence_band:
+          pt.capacity_5th !== undefined && pt.capacity_95th !== undefined
+            ? [pt.capacity_5th, pt.capacity_95th]
+            : undefined,
+        primary_capacity:
+          isStochastic && pt.capacity_median !== undefined
+            ? pt.capacity_median
+            : pt.tripartite_mitigated_capacity,
+      };
+    });
   }, [simulationResult.hourly_capacity, isStochastic]);
 
   const [stageFilter, setStageFilter] = useState<'ALL' | CascadeStage>('ALL');
@@ -99,28 +113,28 @@ export function FMEACapacityAnalytics() {
             <button
               type="button"
               onClick={() => applyGlobalPreset('baseline')}
-              className="rounded px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="rounded px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
             >
               Scenario Baseline
             </button>
             <button
               type="button"
               onClick={() => applyGlobalPreset('technical-heavy')}
-              className="rounded px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              className="rounded px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             >
               Technical-Only Bias
             </button>
             <button
               type="button"
               onClick={() => applyGlobalPreset('tripartite-balanced')}
-              className="rounded px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              className="rounded px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
             >
               Tripartite Balanced
             </button>
             <button
               type="button"
               onClick={() => applyGlobalPreset('unmitigated-stress')}
-              className="rounded px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              className="rounded px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
             >
               Unmitigated Stress
             </button>
@@ -132,18 +146,24 @@ export function FMEACapacityAnalytics() {
               data-testid="fmea-simulate-btn"
               onClick={() => executeSimulationOnServer()}
               disabled={isSimulating}
-              className="rounded-md bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-md bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
             >
-              {isSimulating ? 'Simulating...' : 'Simulate'}
+              {isDeterministicBusy && (
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+              )}
+              <span>{isDeterministicBusy ? 'Simulating...' : 'Simulate'}</span>
             </button>
             <button
               type="button"
               data-testid="fmea-monte-carlo-btn"
               onClick={() => executeSimulationOnServer({ replicates: 30 })}
               disabled={isSimulating}
-              className="rounded-md border border-purple-500/70 bg-purple-950/70 px-3 py-1.5 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/70 bg-purple-950/70 px-3 py-1.5 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
             >
-              {isSimulating ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}
+              {isMonteCarloBusy && (
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-purple-200 border-t-transparent" />
+              )}
+              <span>{isMonteCarloBusy ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}</span>
             </button>
           </div>
         </div>
@@ -245,26 +265,51 @@ export function FMEACapacityAnalytics() {
         >
           <div className="border-b border-slate-800 pb-3 mb-4">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-400">
-              <span className="flex items-center gap-2">
-                <span>CHART 02 · SIMPY 24-HOUR THROUGHPUT TRAJECTORY</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-300">CHART 02</span>
+                <span aria-hidden="true">·</span>
+                <span
+                  data-testid="chart-engine-badge"
+                  className={`rounded px-2 py-0.5 text-[10px] font-semibold border ${
+                    simulationResult.provenance?.engine === 'fastapi-python'
+                      ? 'bg-cyan-950/80 text-cyan-300 border-cyan-800'
+                      : simulationResult.provenance?.is_fallback
+                      ? 'bg-amber-950/80 text-amber-300 border-amber-800'
+                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                  }`}
+                >
+                  ● {simulationResult.provenance?.engine === 'fastapi-python'
+                    ? 'AUTHORITATIVE PYTHON ENGINE (SimPy)'
+                    : simulationResult.provenance?.is_fallback
+                    ? 'CLIENT FALLBACK PREVIEW'
+                    : 'IN-BROWSER CLIENT PREVIEW'}
+                </span>
+                {isStale && (
+                  <span
+                    data-testid="chart-stale-badge"
+                    className="rounded bg-amber-950/80 px-2 py-0.5 text-[10px] font-semibold text-amber-300 border border-amber-800"
+                  >
+                    STALE PREVIEW (REV #{simulationResult.provenance?.input_revision ?? 1})
+                  </span>
+                )}
                 {isStochastic && (
                   <span
                     data-testid="chart-monte-carlo-badge"
                     className="rounded bg-purple-950/80 px-2 py-0.5 text-[10px] font-semibold text-purple-300 border border-purple-800"
                   >
-                    ⚡ MONTE CARLO (30 REPLICATES · 5th–95th %ile)
+                    ⚡ MONTE CARLO (30 REPLICATES)
                   </span>
                 )}
-              </span>
-              <span>TRIGGER: T+0{triggerHour}:00Z</span>
+              </div>
+              <span className="text-rose-400 font-semibold font-mono">TRIGGER: {triggerTimeLabel}</span>
             </div>
-            <h3 className="mt-1 text-sm font-bold text-slate-100">
-              Hourly Airport Movement Capacity Degradation &amp; Stage 3 Recovery Stall
+            <h3 className="mt-1 text-base font-bold text-slate-100">
+              How does airport capacity recover after the trigger?
             </h3>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="mt-0.5 text-xs text-slate-400 leading-relaxed">
               {isStochastic
-                ? 'Displays 5th–95th percentile confidence band and 50th percentile (median) recovery trajectory across 30 stochastic Monte Carlo replicates with Lognormal repair and Uniform propagation delays.'
-                : 'Compares Unmitigated collapse, Technical-Only plateau (stalled by Stage 3 Formal/Informal deficits), and your active Tripartite configuration.'}
+                ? 'Hourly movement capacity (movements/hr) over elapsed time (T+HH:MM), contrasting the 30-replicate Monte Carlo 50th percentile median and 5th–95th percentile confidence band against counterfactual policy benchmarks.'
+                : 'Hourly movement capacity (movements/hr) over elapsed time (T+HH:MM), contrasting active Tripartite mitigation against unmitigated collapse and technical-only recovery stalls.'}
             </p>
           </div>
 
@@ -310,6 +355,7 @@ export function FMEACapacityAnalytics() {
                     }
                     return [value, name];
                   }}
+                  labelFormatter={(label) => `Elapsed Sim Time: ${label}`}
                 />
                 <Legend
                   wrapperStyle={{
@@ -319,28 +365,29 @@ export function FMEACapacityAnalytics() {
                   }}
                 />
                 <ReferenceLine
-                  x={`${String(triggerHour).padStart(2, '0')}:00Z`}
+                  x={triggerTimeLabel}
                   stroke="#F43F5E"
                   strokeDasharray="4 4"
                   label={{
-                    value: 'Stage 1 Trigger',
+                    value: `Stage 1 Trigger (${triggerTimeLabel})`,
                     position: 'top',
                     fill: '#FDA4AF',
                     fontSize: 10,
+                    fontFamily: 'JetBrains Mono',
                   }}
                 />
 
-                {/* Layer 1: 5th-95th Percentile Shaded Confidence Band (Layered behind main lines) */}
+                {/* Layer 1: 5th-95th Percentile Shaded Confidence Band */}
                 {isStochastic && (
                   <Area
                     type="monotone"
                     dataKey="confidence_band"
-                    name="5th–95th %ile Confidence Band"
+                    name="Monte Carlo 5th–95th %ile Band [Shaded]"
                     fill="#A855F7"
-                    fillOpacity={0.25}
+                    fillOpacity={0.2}
                     stroke="#C084FC"
                     strokeWidth={1}
-                    strokeDasharray="2 2"
+                    strokeDasharray="3 3"
                   />
                 )}
 
@@ -349,9 +396,9 @@ export function FMEACapacityAnalytics() {
                   <Area
                     type="monotone"
                     dataKey="tripartite_mitigated_capacity"
-                    name="Active Tripartite Mitigation"
+                    name="Active Tripartite Fill [Shaded]"
                     fill="#10B981"
-                    fillOpacity={0.16}
+                    fillOpacity={0.12}
                     stroke="none"
                   />
                 )}
@@ -360,9 +407,9 @@ export function FMEACapacityAnalytics() {
                 <Line
                   type="stepAfter"
                   dataKey="baseline_capacity"
-                  name="Nominal Capacity"
+                  name="Nominal Capacity (Baseline) [Step-dashed]"
                   stroke="#64748B"
-                  strokeDasharray="5 5"
+                  strokeDasharray="6 4"
                   strokeWidth={1.5}
                   dot={false}
                 />
@@ -371,10 +418,10 @@ export function FMEACapacityAnalytics() {
                 <Line
                   type="monotone"
                   dataKey="primary_capacity"
-                  name={isStochastic ? 'Median Capacity (50th %ile)' : 'Active Tripartite Configuration'}
-                  stroke="#10B981"
+                  name={isStochastic ? 'Monte Carlo 50th %ile Median [Solid cyan]' : 'Active Tripartite Configuration [Solid]'}
+                  stroke={isStochastic ? '#06B6D4' : '#10B981'}
                   strokeWidth={2.5}
-                  dot={isStochastic ? { r: 2.5, fill: '#10B981' } : false}
+                  dot={isStochastic ? { r: 3, fill: '#06B6D4' } : false}
                 />
 
                 {/* Layer 4: Deterministic benchmark line when stochastic is active */}
@@ -382,8 +429,8 @@ export function FMEACapacityAnalytics() {
                   <Line
                     type="monotone"
                     dataKey="tripartite_mitigated_capacity"
-                    name="Deterministic Baseline (1 Rep)"
-                    stroke="#34D399"
+                    name="Deterministic Baseline (1 Rep) [Fine-dashed]"
+                    stroke="#10B981"
                     strokeWidth={1.5}
                     strokeDasharray="4 2"
                     dot={false}
@@ -394,10 +441,10 @@ export function FMEACapacityAnalytics() {
                 <Line
                   type="monotone"
                   dataKey="technical_only_capacity"
-                  name="Technical-Only (Stage 3 Stall)"
+                  name="Technical-Only Bias (Stage 3 Deficit) [Dashed]"
                   stroke="#F59E0B"
                   strokeWidth={2}
-                  strokeDasharray="4 2"
+                  strokeDasharray="6 3"
                   dot={false}
                 />
 
@@ -405,9 +452,10 @@ export function FMEACapacityAnalytics() {
                 <Line
                   type="monotone"
                   dataKey="unmitigated_capacity"
-                  name="Unmitigated Cascade"
+                  name="Unmitigated Stress (Worst-Case) [Dotted]"
                   stroke="#F43F5E"
                   strokeWidth={1.75}
+                  strokeDasharray="2 2"
                   dot={false}
                 />
               </ComposedChart>

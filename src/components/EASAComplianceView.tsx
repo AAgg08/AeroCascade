@@ -86,16 +86,18 @@ export function EASAComplianceView() {
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
             type="button"
+            data-testid="export-json-btn"
             onClick={handleDownloadJson}
-            className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-[#0B0F17] px-3.5 py-2 text-xs font-semibold text-slate-200 hover:border-slate-500 hover:text-white transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-[#0B0F17] px-3.5 py-2 text-xs font-semibold text-slate-200 hover:border-slate-500 hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <Download className="h-3.5 w-3.5" />
             <span>Export Exercise JSON</span>
           </button>
           <button
             type="button"
+            data-testid="print-dossier-btn"
             onClick={() => handlePrint()}
-            className="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <Printer className="h-3.5 w-3.5" />
             <span>Print Exercise Dossier</span>

@@ -362,7 +362,7 @@ export function runDiscreteEventSimulation(req: SimulationInputParams): Simulati
 
     hourlyCapacity.push({
       hour: h,
-      time_label: `${String(h).padStart(2, '0')}:00Z`,
+      time_label: `T+${String(h).padStart(2, '0')}:00`,
       baseline_capacity: base,
       unmitigated_capacity: unmit,
       technical_only_capacity: techOnly,
