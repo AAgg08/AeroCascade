@@ -19,6 +19,8 @@ export const ControlCategory = {
 export type ControlCategory = (typeof ControlCategory)[keyof typeof ControlCategory];
 
 export const PSOELevel = {
+  NOT_ASSESSED: 'NOT_ASSESSED',
+  NOT_PRESENT: 'NOT_PRESENT',
   PRESENT: 'PRESENT',
   SUITABLE: 'SUITABLE',
   OPERATIONAL: 'OPERATIONAL',
@@ -70,6 +72,13 @@ export interface SystemNodeModel {
   er040_severity: ER040Severity;
   base_latency_minutes: number;
   mitigation_recommendation: string;
+  repair_duration_hours?: number;
+  requires_authorization?: boolean;
+  authorization_delay_hours?: number;
+  required_technicians?: number;
+  redundancy_group?: string;
+  is_primary?: boolean;
+  failover_delay_hours?: number;
 }
 
 export interface DependencyEdgeModel {
@@ -79,6 +88,43 @@ export interface DependencyEdgeModel {
   coupling_weight: number;
   propagation_mechanism: string;
   protocol_layer: string;
+  propagation_delay_hours?: number;
+  dependency_type?: string;
+  distance_weight?: number;
+}
+
+export interface RedundancyGroupConfig {
+  group_id: string;
+  primary_node_id: string;
+  backup_node_ids: string[];
+  failover_delay_hours: number;
+  degraded_capacity_factor: number;
+}
+
+export interface AirportService {
+  service_id: string;
+  name: string;
+  required_node_ids: string[];
+  redundancy_group_id?: string;
+  criticality_weight: number;
+  degraded_availability_factor: number;
+}
+
+export interface InitiatingEvent {
+  event_id?: string;
+  node_id: string;
+  event_time_hours: number;
+  failure_mode?: string;
+  parent_event_id?: string | null;
+}
+
+export interface RecoveryMetrics {
+  recovered: boolean;
+  recovery_time_hours: number | null;
+  threshold_capacity: number;
+  sustained_duration_hours: number;
+  is_censored: boolean;
+  censored_reason?: string | null;
 }
 
 export interface ScenarioPreset {
@@ -107,6 +153,10 @@ export interface DiscreteEventRecord {
   narrative: string;
   capacity_impact_pct: number;
   residual_rpn: number;
+  parent_event_id?: string | null;
+  causal_reason?: string;
+  state_from?: string;
+  state_to?: string;
 }
 
 export interface HourlyCapacityPoint {
@@ -117,7 +167,20 @@ export interface HourlyCapacityPoint {
   technical_only_capacity: number;
   tripartite_mitigated_capacity: number;
   active_stage: string;
+  /** Estimated lost movement capacity (hourly deficit integral), formerly labeled delayed flights */
+  estimated_lost_capacity_cumulative: number;
+  /** Backward-compatible alias for estimated_lost_capacity_cumulative */
   delayed_flights_cumulative: number;
+}
+
+export interface ResultProvenance {
+  engine: 'browser-typescript' | 'server-typescript' | 'fastapi-python';
+  engine_label: string;
+  model_version: string;
+  input_revision: number;
+  generated_at: string;
+  is_fallback: boolean;
+  fallback_reason?: string;
 }
 
 export interface NodeCentralityMetric {
@@ -131,16 +194,36 @@ export interface NodeCentralityMetric {
   out_degree_blast_radius: number;
   chokepoint_index: number;
   raw_rpn: number;
+  /** Adjusted risk score after tripartite controls damping (0 <= adjusted <= raw) */
   residual_rpn: number;
+  /** Alias for residual_rpn */
+  adjusted_risk_score?: number;
   policy_investment: number;
   investment_efficiency_gap: number;
   psoe_status: PSOELevel;
   er040_severity: ER040Severity;
+  direct_in_degree?: number;
+  direct_out_degree?: number;
+  downstream_reachable_nodes?: number;
+  downstream_reachability_ratio?: number;
+}
+
+export interface EASAPartISReportingStage {
+  stage_name: string;
+  legal_basis: string;
+  timing_rule: string;
+  status: string;
+  notes: string;
 }
 
 export interface EASAPartISNotification {
   report_id: string;
+  /** Combined regulatory references list */
   regulation_basis: string[];
+  /** Statutory binding EU regulations */
+  statutory_regulations: string[];
+  /** Voluntary industry standards & guidance */
+  voluntary_standards: string[];
   reporting_entity: string;
   initial_notification_deadline_hours: number;
   incident_classification: string;
@@ -150,17 +233,31 @@ export interface EASAPartISNotification {
   stage_2_operational_propagation: string;
   stage_3_governance_recovery_blocker: string;
   psoe_maturity_summary: Record<string, PSOELevel>;
+  /** Proposed containment actions (illustrative recommendations, not legal mandates) */
   containment_actions: string[];
+  /** Proposed structural remediations (illustrative recommendations, not legal mandates) */
   structural_remediations: string[];
+  /** Exercise Draft flag confirming non-submission status */
+  is_exercise_draft: boolean;
+  reporting_applicability: string;
+  awareness_time: string;
+  official_guidance_url: string;
+  reporting_stages: EASAPartISReportingStage[];
 }
 
 export interface SimulationSummaryKPIs {
   mean_raw_rpn: number;
   mean_residual_rpn: number;
+  mean_adjusted_risk?: number;
   min_hourly_capacity: number;
   capacity_retention_pct: number;
   recovery_window_hours: number;
+  /** Total estimated lost movement capacity across the horizon (deficit integral) */
   total_disrupted_movements: number;
+  estimated_lost_movement_capacity?: number;
+  /** Average control score across Technical, Formal, and Informal dimensions (0-100) */
+  average_control_score: number;
+  /** Backward-compatible alias for average_control_score */
   tripartite_balance_index: number;
   top_chokepoint_code: string;
   top_chokepoint_score: number;
@@ -168,9 +265,18 @@ export interface SimulationSummaryKPIs {
 
 export interface SimulationResponse {
   scenario_id: string;
+  model_version?: string;
+  schema_version?: string;
+  run_id?: string;
+  input_hash?: string;
+  parameter_set_version?: string;
+  random_seed?: number;
   summary_kpis: SimulationSummaryKPIs;
   events: DiscreteEventRecord[];
   hourly_capacity: HourlyCapacityPoint[];
   node_analytics: NodeCentralityMetric[];
   easa_notification: EASAPartISNotification;
+  recovery_metrics?: RecoveryMetrics;
+  provenance: ResultProvenance;
+  input_snapshot?: Record<string, unknown>;
 }

@@ -76,7 +76,7 @@ export function FMEACapacityAnalytics() {
             onClick={() => applyGlobalPreset('baseline')}
             className="rounded px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0"
           >
-            Paper Baseline
+            Scenario Baseline
           </button>
           <button
             type="button"
@@ -379,7 +379,7 @@ export function FMEACapacityAnalytics() {
                 <th className="py-2.5 px-3">FORMAL %</th>
                 <th className="py-2.5 px-3">INFORMAL %</th>
                 <th className="py-2.5 px-3">POLICY INV.</th>
-                <th className="py-2.5 px-3 text-right">RESIDUAL RPN</th>
+                <th className="py-2.5 px-3 text-right">ADJUSTED RISK</th>
                 <th className="py-2.5 px-3 text-right">PSOE</th>
               </tr>
             </thead>
@@ -538,6 +538,91 @@ export function FMEACapacityAnalytics() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="border-t border-slate-800 bg-[#0B0F17] px-4 py-2.5 text-[11px] text-slate-400">
+          * <span className="font-semibold text-slate-300">Adjusted Risk Score</span> (bounded by 0.0 ≤ Adjusted ≤ Raw) reflects illustrative mitigation damping from Dhillon &amp; Moores (2001) tripartite controls. It is a fractional modeling metric, not an integer reassessment of FMEA parameters.
+        </div>
+      </section>
+
+      {/* Dedicated Paper Reference Table (Aggarwal & Dhillon, AIAA Aviation 2026, Table 3) */}
+      <section
+        aria-label="AIAA Aviation 2026 Paper Reference Benchmarks"
+        className="rounded-md border border-slate-800 bg-[#111827] p-5 space-y-3"
+      >
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between border-b border-slate-800 pb-3">
+          <div>
+            <span className="font-mono text-[11px] text-cyan-400 font-semibold uppercase tracking-wider">
+              PAPER REFERENCE · AIAA AVIATION 2026 TABLE 3 BENCHMARKS
+            </span>
+            <h3 className="text-sm font-bold text-slate-100">
+              Macro-Category Qualitative FMEA Paper Reference Scores
+            </h3>
+          </div>
+          <span className="text-[11px] font-mono text-slate-400">
+            Category-level paper scores · Not calibrated node parameters
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-300 leading-relaxed">
+          The table below reflects the four qualitative macro-categories established in Section VI.A / Table 3 of Aggarwal &amp; Dhillon (AIAA Aviation 2026). In the paper, these represent high-level sector assessments; the scenario nodes above are synthetic, illustrative system models inspired by this taxonomy rather than empirical node-level calibrations.
+        </p>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-slate-800 bg-[#0B0F17] font-mono text-[11px] text-slate-400">
+                <th className="py-2.5 px-3">PAPER MACRO-CATEGORY (TABLE 3)</th>
+                <th className="py-2.5 px-3 text-center">LIKELIHOOD (L)</th>
+                <th className="py-2.5 px-3 text-center">IMPACT (I)</th>
+                <th className="py-2.5 px-3 text-center">RECOVERY COMPLEXITY (RC)</th>
+                <th className="py-2.5 px-3 text-right">RAW RPN (L × I × RC)</th>
+                <th className="py-2.5 px-3">METHODOLOGICAL FOCUS IN PAPER</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/70 font-mono text-xs">
+              <tr>
+                <td className="py-2.5 px-3 font-semibold text-slate-200">Legacy Infrastructure</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">4</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">4</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">4</td>
+                <td className="py-2.5 px-3 text-right font-bold text-amber-300">64</td>
+                <td className="py-2.5 px-3 font-sans text-slate-400">
+                  Aging communication masts, unencrypted analog video feeds, legacy serial interfaces, and lack of firmware hardening.
+                </td>
+              </tr>
+              <tr>
+                <td className="py-2.5 px-3 font-semibold text-slate-200">Cybersecurity Threats</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">5</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">5</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">3</td>
+                <td className="py-2.5 px-3 text-right font-bold text-amber-300">75</td>
+                <td className="py-2.5 px-3 font-sans text-slate-400">
+                  RTP sensor replay attacks, A-SMGCS ghost track injection, and PTP/GNSS time desynchronization on RTC ingress links.
+                </td>
+              </tr>
+              <tr>
+                <td className="py-2.5 px-3 font-semibold text-slate-200">Operational Fragility</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">4</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">5</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">4</td>
+                <td className="py-2.5 px-3 text-right font-bold text-rose-400">80</td>
+                <td className="py-2.5 px-3 font-sans text-slate-400">
+                  Highest macro RPN in paper: multi-aerodrome sector split failures, OTW spatial-temporal decoupling, and capacity collapse.
+                </td>
+              </tr>
+              <tr>
+                <td className="py-2.5 px-3 font-semibold text-slate-200">Human Factors &amp; Staffing</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">4</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">3</td>
+                <td className="py-2.5 px-3 text-center text-slate-300">3</td>
+                <td className="py-2.5 px-3 text-right font-bold text-emerald-400">36</td>
+                <td className="py-2.5 px-3 font-sans text-slate-400">
+                  Controller cognitive distrust, alert fatigue, reversion hesitation, and cross-organization SLA coordination deficits.
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>

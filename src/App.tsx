@@ -19,6 +19,8 @@ export default function App() {
     executeSimulationOnServer,
     isSimulating,
     baselineMovementsPerHour,
+    backendError,
+    clearBackendError,
   } = useCascadeStore();
 
   const kpis = simulationResult.summary_kpis;
@@ -80,20 +82,93 @@ export default function App() {
       <main id="top" className="flex-1 mx-auto w-full max-w-[1440px] px-4 sm:px-6 py-6 space-y-6">
         {/* Research Context & 4-Column Telemetry Strip */}
         <section aria-label="Simulation Summary Telemetry" className="space-y-4">
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-100">
-              Remote Tower Cybersecurity &amp; Three-Stage Cascading Failure Simulator
-            </h1>
-            <div className="text-xs font-mono text-slate-400">
-              Aggarwal &amp; Dhillon (AIAA Aviation 2026) <span aria-hidden="true">·</span> Dhillon &amp; Moores (2001)
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-100">
+                Remote Tower Cybersecurity &amp; Three-Stage Cascading Failure Simulator
+              </h1>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Illustrative research model grounded in Aggarwal &amp; Dhillon (AIAA Aviation 2026) · Dhillon &amp; Moores (2001) Tripartite Controls
+              </p>
+            </div>
+
+            {/* Result Provenance Badge */}
+            <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+              <span
+                data-testid="provenance-engine-badge"
+                className={`inline-flex items-center px-2.5 py-1 rounded text-[11px] font-semibold border ${
+                  simulationResult.provenance?.engine === 'fastapi-python'
+                    ? 'bg-cyan-950/80 text-cyan-300 border-cyan-800'
+                    : simulationResult.provenance?.is_fallback
+                    ? 'bg-amber-950/80 text-amber-300 border-amber-800'
+                    : 'bg-slate-900 text-slate-300 border-slate-700'
+                }`}
+              >
+                ● ENGINE: {simulationResult.provenance?.engine_label ?? 'In-Browser Client (TypeScript)'}
+              </span>
+              {simulationResult.run_id && (
+                <span className="text-slate-400 text-[11px]" title={`Authoritative Run ID: ${simulationResult.run_id}`}>
+                  RUN: {simulationResult.run_id.slice(0, 8)}
+                </span>
+              )}
+              {simulationResult.input_hash && (
+                <span className="text-slate-400 text-[11px]" title={`Canonical Input SHA256: ${simulationResult.input_hash}`}>
+                  HASH: {simulationResult.input_hash.slice(0, 8)}
+                </span>
+              )}
+              <span className="text-slate-400">
+                REV #{simulationResult.provenance?.input_revision ?? 1}
+              </span>
+              {simulationResult.provenance?.is_fallback && (
+                <span className="text-amber-400 text-[11px]" title={simulationResult.provenance.fallback_reason}>
+                  (FALLBACK ACTIVE)
+                </span>
+              )}
             </div>
           </div>
 
+          {backendError && (
+            <div
+              data-testid="backend-error-banner"
+              className="rounded-md border border-rose-800/80 bg-rose-950/40 p-4 text-xs font-mono"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-rose-300">
+                  ⚠ AUTHORITATIVE SIMULATION BACKEND ERROR
+                </span>
+                <button
+                  type="button"
+                  onClick={clearBackendError}
+                  className="text-slate-400 hover:text-slate-200"
+                >
+                  ✕ Dismiss
+                </button>
+              </div>
+              <p className="mt-1 text-slate-300 font-sans">{backendError}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => executeSimulationOnServer()}
+                  className="rounded border border-rose-700 bg-rose-900/60 px-3 py-1 font-semibold text-rose-200 hover:bg-rose-800"
+                >
+                  Retry Authoritative Simulation
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeSimulationOnServer({ allowLegacyDemo: true })}
+                  className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-slate-300 hover:bg-slate-700"
+                >
+                  Run Legacy Demo Mode (Explicitly Uncalibrated)
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Metric 1: Mean Residual vs Raw RPN */}
+            {/* Metric 1: Mean Adjusted Risk vs Raw RPN */}
             <div className="rounded-md border border-slate-800 bg-[#111827] p-4">
               <div className="text-xs font-mono uppercase tracking-wider text-slate-400">
-                MEAN RESIDUAL FMEA RPN
+                MEAN ADJUSTED RISK SCORE
               </div>
               <div className="mt-1 flex items-baseline">
                 <span
@@ -103,11 +178,11 @@ export default function App() {
                   {kpis.mean_residual_rpn.toFixed(1)}
                 </span>
                 <span className="ml-1.5 text-xs font-mono text-slate-400">
-                  / {kpis.mean_raw_rpn.toFixed(1)} RAW
+                  / {kpis.mean_raw_rpn.toFixed(1)} RAW RPN
                 </span>
               </div>
               <div className="mt-1 text-xs font-mono text-emerald-400 tabular-nums">
-                REDUCTION: -{(100 - (kpis.mean_residual_rpn / Math.max(1, kpis.mean_raw_rpn)) * 100).toFixed(1)}% VIA TRIPARTITE
+                EST. MITIGATION: -{(100 - (kpis.mean_residual_rpn / Math.max(1, kpis.mean_raw_rpn)) * 100).toFixed(1)}% (MODEL DAMPING)
               </div>
             </div>
 
@@ -132,10 +207,10 @@ export default function App() {
               </div>
             </div>
 
-            {/* Metric 3: Stage 3 Recovery Window & Disrupted Flights */}
+            {/* Metric 3: Time Below 90% Capacity & Estimated Lost Movement Capacity */}
             <div className="rounded-md border border-slate-800 bg-[#111827] p-4">
               <div className="text-xs font-mono uppercase tracking-wider text-slate-400">
-                STAGE 3 RECOVERY WINDOW
+                TIME BELOW 90% CAPACITY
               </div>
               <div className="mt-1 flex items-baseline">
                 <span
@@ -145,15 +220,15 @@ export default function App() {
                   {kpis.recovery_window_hours}
                 </span>
                 <span className="ml-1.5 text-xs font-mono text-slate-400">
-                  HOURS (&lt;90% CAP)
+                  HOURS (PROVISIONAL)
                 </span>
               </div>
               <div className="mt-1 text-xs font-mono text-rose-400 tabular-nums">
-                CUMULATIVE DELAYED: {kpis.total_disrupted_movements} MOVEMENTS
+                LOST CAPACITY: {kpis.total_disrupted_movements} MOVEMENTS (EST. DEFICIT)
               </div>
             </div>
 
-            {/* Metric 4: Primary Chokepoint & Tripartite Balance */}
+            {/* Metric 4: Primary Chokepoint & Average Control Score */}
             <div className="rounded-md border border-slate-800 bg-[#111827] p-4">
               <div className="text-xs font-mono uppercase tracking-wider text-slate-400">
                 PRIMARY GRAPH CHOKEPOINT
@@ -167,7 +242,7 @@ export default function App() {
                 </span>
               </div>
               <div className="mt-1 text-xs font-mono text-slate-300 tabular-nums">
-                TRIPARTITE BALANCE: {kpis.tripartite_balance_index.toFixed(1)}% COMPOSITE
+                AVG CONTROL SCORE: {(kpis.average_control_score ?? kpis.tripartite_balance_index).toFixed(1)}% (0-100)
               </div>
             </div>
           </div>

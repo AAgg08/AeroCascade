@@ -30,6 +30,10 @@ interface CascadeState {
   simulationResult: SimulationResponse;
   isSimulating: boolean;
   lastSyncedAt: string;
+  inputRevision: number;
+  latestRequestedRevision: number;
+  pendingRequestsCount: number;
+  backendError: string | null;
 
   setActiveTab: (tab: WorkspaceTab) => void;
   selectScenario: (scenarioId: string) => void;
@@ -40,7 +44,8 @@ interface CascadeState {
   applyGlobalPreset: (mode: 'baseline' | 'technical-heavy' | 'tripartite-balanced' | 'unmitigated-stress') => void;
   setTriggerHour: (hour: number) => void;
   setBaselineMovements: (mvmt: number) => void;
-  executeSimulationOnServer: () => Promise<void>;
+  executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean }) => Promise<void>;
+  clearBackendError: () => void;
 }
 
 const initialScenario = SCENARIO_PRESETS[0];
@@ -51,6 +56,14 @@ const initialSimulation = runDiscreteEventSimulation({
   trigger_hour: initialScenario.trigger_hour,
   nodes: structuredClone(initialScenario.nodes),
   edges: structuredClone(initialScenario.edges),
+  provenance: {
+    engine: 'browser-typescript',
+    engine_label: 'In-Browser Client (TypeScript Engine)',
+    model_version: '1.0.0-illustrative',
+    input_revision: 1,
+    generated_at: new Date().toISOString(),
+    is_fallback: false,
+  },
 });
 
 export const useCascadeStore = create<CascadeState>((set, get) => ({
@@ -65,11 +78,18 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   selectedNodeId: initialScenario.nodes[0]?.id ?? null,
   simulationResult: initialSimulation,
   isSimulating: false,
-  lastSyncedAt: 'T+00:00Z (Initial Seed)',
+  lastSyncedAt: 'In-Browser Client (Initial Seed)',
+  inputRevision: 1,
+  latestRequestedRevision: 1,
+  pendingRequestsCount: 0,
+  backendError: null,
+
+  clearBackendError: () => set({ backendError: null }),
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   selectScenario: (scenarioId) => {
+    const nextRev = get().inputRevision + 1;
     const found = SCENARIO_PRESETS.find((s) => s.id === scenarioId) ?? SCENARIO_PRESETS[0];
     const clonedNodes = structuredClone(found.nodes);
     const clonedEdges = structuredClone(found.edges);
@@ -80,6 +100,14 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       trigger_hour: found.trigger_hour,
       nodes: clonedNodes,
       edges: clonedEdges,
+      provenance: {
+        engine: 'browser-typescript',
+        engine_label: 'In-Browser Client (TypeScript Engine)',
+        model_version: '1.0.0-illustrative',
+        input_revision: nextRev,
+        generated_at: new Date().toISOString(),
+        is_fallback: false,
+      },
     });
     set({
       activeScenarioId: found.id,
@@ -90,7 +118,8 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       edges: clonedEdges,
       selectedNodeId: clonedNodes[0]?.id ?? null,
       simulationResult: simResult,
-      lastSyncedAt: `Scenario Loaded (${found.id})`,
+      inputRevision: nextRev,
+      lastSyncedAt: `Scenario Loaded (${found.id}) · Rev #${nextRev}`,
     });
   },
 
@@ -98,6 +127,7 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
 
   updateNodeTripartite: (nodeId, partial) => {
     const state = get();
+    const nextRev = state.inputRevision + 1;
     const updatedNodes = state.nodes.map((n) =>
       n.id === nodeId
         ? {
@@ -116,15 +146,26 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       trigger_hour: state.triggerHour,
       nodes: updatedNodes,
       edges: state.edges,
+      provenance: {
+        engine: 'browser-typescript',
+        engine_label: 'In-Browser Client (TypeScript Engine)',
+        model_version: '1.0.0-illustrative',
+        input_revision: nextRev,
+        generated_at: new Date().toISOString(),
+        is_fallback: false,
+      },
     });
     set({
       nodes: updatedNodes,
       simulationResult: simResult,
+      inputRevision: nextRev,
+      lastSyncedAt: `Control Updated (${nodeId}) · Rev #${nextRev}`,
     });
   },
 
   updateNodeFMEA: (nodeId, partial) => {
     const state = get();
+    const nextRev = state.inputRevision + 1;
     const updatedNodes = state.nodes.map((n) =>
       n.id === nodeId
         ? {
@@ -143,23 +184,35 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       trigger_hour: state.triggerHour,
       nodes: updatedNodes,
       edges: state.edges,
+      provenance: {
+        engine: 'browser-typescript',
+        engine_label: 'In-Browser Client (TypeScript Engine)',
+        model_version: '1.0.0-illustrative',
+        input_revision: nextRev,
+        generated_at: new Date().toISOString(),
+        is_fallback: false,
+      },
     });
     set({
       nodes: updatedNodes,
       simulationResult: simResult,
+      inputRevision: nextRev,
+      lastSyncedAt: `FMEA Updated (${nodeId}) · Rev #${nextRev}`,
     });
   },
 
   updateNodePSOE: (nodeId, psoe) => {
     const state = get();
+    const nextRev = state.inputRevision + 1;
     const updatedNodes = state.nodes.map((n) =>
       n.id === nodeId ? { ...n, psoe_status: psoe } : n
     );
-    set({ nodes: updatedNodes });
+    set({ nodes: updatedNodes, inputRevision: nextRev });
   },
 
   applyGlobalPreset: (mode) => {
     const state = get();
+    const nextRev = state.inputRevision + 1;
     const basePreset =
       SCENARIO_PRESETS.find((s) => s.id === state.activeScenarioId) ?? SCENARIO_PRESETS[0];
 
@@ -207,17 +260,27 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       trigger_hour: state.triggerHour,
       nodes: updatedNodes,
       edges: state.edges,
+      provenance: {
+        engine: 'browser-typescript',
+        engine_label: 'In-Browser Client (TypeScript Engine)',
+        model_version: '1.0.0-illustrative',
+        input_revision: nextRev,
+        generated_at: new Date().toISOString(),
+        is_fallback: false,
+      },
     });
 
     set({
       nodes: updatedNodes,
       simulationResult: simResult,
-      lastSyncedAt: `Policy Preset Applied (${mode})`,
+      inputRevision: nextRev,
+      lastSyncedAt: `Policy Preset Applied (${mode === 'baseline' ? 'Scenario Baseline' : mode}) · Rev #${nextRev}`,
     });
   },
 
   setTriggerHour: (hour) => {
     const state = get();
+    const nextRev = state.inputRevision + 1;
     const clamped = Math.min(12, Math.max(1, Math.round(hour)));
     const simResult = runDiscreteEventSimulation({
       scenario_id: state.activeScenarioId,
@@ -226,12 +289,21 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       trigger_hour: clamped,
       nodes: state.nodes,
       edges: state.edges,
+      provenance: {
+        engine: 'browser-typescript',
+        engine_label: 'In-Browser Client (TypeScript Engine)',
+        model_version: '1.0.0-illustrative',
+        input_revision: nextRev,
+        generated_at: new Date().toISOString(),
+        is_fallback: false,
+      },
     });
-    set({ triggerHour: clamped, simulationResult: simResult });
+    set({ triggerHour: clamped, simulationResult: simResult, inputRevision: nextRev });
   },
 
   setBaselineMovements: (mvmt) => {
     const state = get();
+    const nextRev = state.inputRevision + 1;
     const clamped = Math.min(120, Math.max(12, Math.round(mvmt)));
     const simResult = runDiscreteEventSimulation({
       scenario_id: state.activeScenarioId,
@@ -240,17 +312,46 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       trigger_hour: state.triggerHour,
       nodes: state.nodes,
       edges: state.edges,
+      provenance: {
+        engine: 'browser-typescript',
+        engine_label: 'In-Browser Client (TypeScript Engine)',
+        model_version: '1.0.0-illustrative',
+        input_revision: nextRev,
+        generated_at: new Date().toISOString(),
+        is_fallback: false,
+      },
     });
-    set({ baselineMovementsPerHour: clamped, simulationResult: simResult });
+    set({ baselineMovementsPerHour: clamped, simulationResult: simResult, inputRevision: nextRev });
   },
 
-  executeSimulationOnServer: async () => {
+  executeSimulationOnServer: async (opts?: { allowLegacyDemo?: boolean }) => {
     const state = get();
-    set({ isSimulating: true });
+    const requestRevision = state.inputRevision;
+
+    // Validate inputs
+    if (!state.nodes || state.nodes.length === 0) {
+      set({
+        backendError: 'Simulation node list cannot be empty.',
+        isSimulating: false,
+      });
+      return;
+    }
+
+    set((s) => ({
+      isSimulating: true,
+      latestRequestedRevision: requestRevision,
+      pendingRequestsCount: s.pendingRequestsCount + 1,
+      backendError: null,
+    }));
+
     try {
-      const response = await fetch('/api/simulate', {
+      const url = opts?.allowLegacyDemo ? '/api/simulate?allow_legacy_demo=true' : '/api/simulate';
+      const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(opts?.allowLegacyDemo ? { 'x-allow-legacy-demo': 'true' } : {}),
+        },
         body: JSON.stringify({
           scenario_id: state.activeScenarioId,
           horizon_hours: state.horizonHours,
@@ -258,32 +359,58 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
           trigger_hour: state.triggerHour,
           nodes: state.nodes,
           edges: state.edges,
+          input_revision: requestRevision,
         }),
       });
-      if (response.ok) {
-        const data: SimulationResponse = await response.json();
+
+      const pendingLeft = Math.max(0, get().pendingRequestsCount - 1);
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => null);
+        const errMsg = errJson?.error || errJson?.detail || `Simulation server returned HTTP ${response.status}`;
+        const isLatest = get().latestRequestedRevision === requestRevision;
         set({
-          simulationResult: data,
-          isSimulating: false,
-          lastSyncedAt: `DES Engine Executed (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })})`,
+          pendingRequestsCount: pendingLeft,
+          // Only clear isSimulating if no newer requests are running
+          isSimulating: pendingLeft > 0 ? get().isSimulating : false,
+          backendError: isLatest ? errMsg : get().backendError,
         });
         return;
       }
-    } catch {
-      // Fallback to deterministic local execution if offline
+
+      const data: SimulationResponse = await response.json();
+
+      // Stale response protection:
+      // If user edited inputs while this request was in flight, or a newer request was dispatched,
+      // this older response must NEITHER overwrite the newer result NOR clear the loading state of the newer request!
+      const isStillLatest = get().latestRequestedRevision === requestRevision && get().inputRevision === requestRevision;
+
+      if (!isStillLatest) {
+        set({
+          pendingRequestsCount: pendingLeft,
+          // Do not clear isSimulating if newer requests are in flight!
+          isSimulating: pendingLeft > 0 ? get().isSimulating : false,
+        });
+        return;
+      }
+
+      const engineLabel = data.provenance?.engine_label ?? 'Authoritative Engine';
+      set({
+        simulationResult: data,
+        isSimulating: pendingLeft > 0 ? get().isSimulating : false,
+        pendingRequestsCount: pendingLeft,
+        backendError: null,
+        lastSyncedAt: `${engineLabel} (Rev #${requestRevision}) at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
+      });
+    } catch (err) {
+      const pendingLeft = Math.max(0, get().pendingRequestsCount - 1);
+      const isLatest = get().latestRequestedRevision === requestRevision;
+      const errMessage = err instanceof Error ? err.message : String(err);
+      set({
+        pendingRequestsCount: pendingLeft,
+        isSimulating: pendingLeft > 0 ? get().isSimulating : false,
+        backendError: isLatest ? `Failed to connect to simulation backend: ${errMessage}` : get().backendError,
+      });
     }
-    const fallback = runDiscreteEventSimulation({
-      scenario_id: state.activeScenarioId,
-      horizon_hours: state.horizonHours,
-      baseline_movements_per_hour: state.baselineMovementsPerHour,
-      trigger_hour: state.triggerHour,
-      nodes: state.nodes,
-      edges: state.edges,
-    });
-    set({
-      simulationResult: fallback,
-      isSimulating: false,
-      lastSyncedAt: 'DES Engine Executed (Deterministic Local)',
-    });
   },
 }));

@@ -115,7 +115,7 @@ export function TopologyWorkspace() {
                 onClick={() => applyGlobalPreset('baseline')}
                 className="rounded px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0"
               >
-                Paper Baseline
+                Scenario Baseline
               </button>
               <button
                 type="button"
@@ -184,7 +184,7 @@ export function TopologyWorkspace() {
 
           {/* React Flow v12 Canvas */}
           <div className="relative h-[640px] w-full bg-[#090D14]" data-testid="cascade-flow-canvas">
-            <ReactFlow<CascadeFlowNodeData>
+            <ReactFlow
               key={activeScenarioId}
               nodes={flowNodes}
               edges={flowEdges}
@@ -513,24 +513,29 @@ export function TopologyWorkspace() {
         </aside>
       </div>
 
-      {/* Bottom Telemetry Tray: SimPy Discrete-Event Simulation (DES) Cascade Log */}
+      {/* Bottom Telemetry Tray: Discrete-Event Simulation (DES) Cascade Log */}
       <section
         aria-label="Discrete-Event Simulation Timeline"
         className="rounded-md border border-slate-800 bg-[#111827] overflow-hidden"
       >
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 bg-[#0F172A] px-5 py-3">
           <div>
-            <h3 className="text-sm font-semibold text-slate-100">
-              Discrete-Event Simulation (DES) Cascade Propagation Log
-            </h3>
-            <p className="text-xs text-slate-400">
-              Chronological event trace mapping Stage 1 (Trigger) → Stage 2 (Operational Fragility Propagation) → Stage 3 (Recovery Blocker)
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-slate-100">
+                Discrete-Event Simulation (DES) Cascade Propagation Log
+              </h3>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">
+                {simulationResult.provenance?.engine_label ?? 'Client TypeScript Engine'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Chronological event trace mapping Stage 1 (Trigger) → Stage 2 (Operational Fragility Propagation) → Stage 3 (Recovery Blocker) · Illustrative model event queue
             </p>
           </div>
           <div className="text-xs font-mono text-slate-400 tabular-nums">
-            RECOVERY WINDOW: <span className="text-amber-300 font-semibold">{simulationResult.summary_kpis.recovery_window_hours} HRS</span>
+            TIME BELOW 90% CAP: <span className="text-amber-300 font-semibold">{simulationResult.summary_kpis.recovery_window_hours} HRS</span>
             <span aria-hidden="true"> · </span>
-            DISRUPTED MOVEMENTS: <span className="text-rose-400 font-semibold">{simulationResult.summary_kpis.total_disrupted_movements} FLIGHTS</span>
+            LOST CAPACITY: <span className="text-rose-400 font-semibold">{simulationResult.summary_kpis.total_disrupted_movements} MOVEMENTS (EST. DEFICIT)</span>
           </div>
         </div>
 
