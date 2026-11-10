@@ -172,11 +172,11 @@ export interface HourlyCapacityPoint {
   /** Backward-compatible alias for estimated_lost_capacity_cumulative */
   delayed_flights_cumulative: number;
   /** Monte Carlo 50th percentile (median) capacity when replicates > 1 */
-  capacity_median?: number;
-  /** Monte Carlo 5th percentile lower confidence bound when replicates > 1 */
-  capacity_5th?: number;
-  /** Monte Carlo 95th percentile upper confidence bound when replicates > 1 */
-  capacity_95th?: number;
+  capacity_median?: number | null;
+  /** Monte Carlo 5th percentile capacity when replicates > 1 */
+  capacity_5th?: number | null;
+  /** Monte Carlo 95th percentile capacity when replicates > 1 */
+  capacity_95th?: number | null;
 }
 
 export interface HourlyCapacityPercentiles {

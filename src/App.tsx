@@ -2,13 +2,9 @@ import { useEffect } from 'react';
 import {
   Activity,
   AlertCircle,
-  ArrowDownRight,
-  ArrowUpRight,
   FileText,
   Network,
   RotateCw,
-  Search,
-  Settings,
   ShieldCheck,
   Terminal,
 } from 'lucide-react';
@@ -34,13 +30,15 @@ export default function App() {
     isSimulating,
     activeRunMode,
     inputRevision,
-    baselineMovementsPerHour,
     backendError,
     clearBackendError,
   } = useCascadeStore();
 
   const isStale = inputRevision > (simulationResult.provenance?.input_revision ?? 0);
   const kpis = simulationResult.summary_kpis;
+  const nominalCapacity = simulationResult.hourly_capacity[0]?.baseline_capacity;
+  const recovery = simulationResult.recovery_metrics;
+  const lostCapacity = kpis.estimated_lost_movement_capacity ?? kpis.total_disrupted_movements;
 
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
   const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
@@ -99,6 +97,7 @@ export default function App() {
                   type="button"
                   onClick={() => setActiveTab(item.id)}
                   title={item.label}
+                  aria-current={isActive ? "page" : undefined}
                   className={`h-11 w-11 rounded-2xl flex items-center justify-center transition-all ${
                     isActive
                       ? 'bg-gray-900 text-white shadow-md'
@@ -111,17 +110,6 @@ export default function App() {
               );
             })}
           </nav>
-        </div>
-
-        {/* Bottom Utility Icon */}
-        <div className="flex flex-col items-center gap-2">
-          <button
-            type="button"
-            title="Console Settings & Metadata"
-            className="h-10 w-10 rounded-2xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 flex items-center justify-center transition-colors"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
         </div>
       </aside>
 
@@ -139,7 +127,6 @@ export default function App() {
               </p>
             </div>
             <div className="hidden lg:flex items-center gap-2 rounded-full bg-gray-50 border border-gray-200/60 px-4 py-1.5 text-xs text-gray-500 shadow-inner">
-              <Search className="h-3.5 w-3.5 text-gray-400" />
               <span>AIAA 2026 Reference Model · Dhillon &amp; Moores (2001)</span>
             </div>
           </div>
@@ -290,6 +277,9 @@ export default function App() {
             aria-label="Simulation Summary Telemetry"
             className="rounded-3xl bg-white p-6 sm:p-8 shadow-sm border border-gray-100"
           >
+            {(simulationResult.replicates ?? 1) > 1 && (
+              <p className="mb-4 text-sm text-gray-600">Summary metrics use the deterministic run. See FMEA &amp; Capacity for Monte Carlo percentiles.</p>
+            )}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 pb-8 border-b border-gray-100">
               {/* Giant Metric Display */}
               <div>
@@ -300,12 +290,14 @@ export default function App() {
                   >
                     {kpis.min_hourly_capacity.toFixed(0)}
                   </span>
-                  <span className="text-xl sm:text-2xl font-bold text-gray-400">
-                    / {baselineMovementsPerHour}
-                  </span>
+                  {nominalCapacity !== undefined && (
+                    <span className="text-xl sm:text-2xl font-bold text-gray-500">
+                      / {nominalCapacity}
+                    </span>
+                  )}
                 </div>
                 <div className="text-sm font-medium text-gray-500 mt-1">
-                  minimum hourly movements / hr (throughput retention floor)
+                  Minimum capacity / nominal capacity (movements per hour)
                 </div>
               </div>
 
@@ -316,17 +308,15 @@ export default function App() {
                     {kpis.capacity_retention_pct.toFixed(1)}% nominal capacity floor
                   </span>
                   <span className="text-gray-500 font-medium">
-                    {kpis.total_disrupted_movements} movements lost deficit
+                    {lostCapacity} estimated lost movements
                   </span>
                 </div>
                 {/* Horizontal progress bar with smooth vibrant gradient */}
                 <div className="relative h-7 w-full rounded-full bg-gray-100/80 shadow-inner overflow-hidden p-1 flex items-center">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-orange-400 via-amber-300 to-emerald-400 shadow-sm flex items-center justify-end pr-2 transition-all duration-500"
-                    style={{ width: `${Math.min(100, Math.max(12, kpis.capacity_retention_pct))}%` }}
-                  >
-                    <div className="h-4 w-1 rounded-full bg-gray-900 shadow-sm" />
-                  </div>
+                    className="h-full rounded-full bg-gradient-to-r from-orange-400 via-amber-300 to-emerald-400 shadow-sm transition-all duration-500"
+                    style={{ width: `${Math.min(100, Math.max(0, kpis.capacity_retention_pct))}%` }}
+                  />
                 </div>
               </div>
             </div>
@@ -344,7 +334,6 @@ export default function App() {
                     {kpis.mean_residual_rpn.toFixed(1)}
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-bold text-rose-600 border border-rose-100">
-                    <ArrowDownRight className="h-3 w-3" />
                     -{(100 - (kpis.mean_residual_rpn / Math.max(1, kpis.mean_raw_rpn)) * 100).toFixed(0)}%
                   </span>
                 </div>
@@ -355,20 +344,25 @@ export default function App() {
 
               {/* Metric 2 */}
               <div className="flex flex-col">
-                <span className="text-xs font-semibold text-gray-500">Recovery Time Window</span>
+                <span className="text-xs font-semibold text-gray-500">{recovery ? "Sustained recovery" : "Preview hours below 90%"}</span>
                 <div className="flex items-center gap-3 mt-1.5">
                   <span
                     data-testid="kpi-recovery-hours"
                     className="text-2xl sm:text-3xl font-extrabold text-amber-600"
                   >
-                    {kpis.recovery_window_hours} hrs
-                  </span>
-                  <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700 border border-amber-100">
-                    &lt; 90% cap
+                    {recovery
+                      ? recovery.is_censored
+                        ? 'Not reached'
+                        : recovery.recovery_time_hours === 0
+                          ? 'No threshold breach'
+                          : `T+${recovery.recovery_time_hours} h`
+                      : `${kpis.recovery_window_hours} h`}
                   </span>
                 </div>
                 <span className="text-xs text-gray-400 mt-1 font-medium">
-                  {kpis.total_disrupted_movements} movements estimated loss
+                  {recovery
+                    ? `Threshold: ${recovery.threshold_capacity} movements/hr for ${recovery.sustained_duration_hours} h`
+                    : 'Hourly samples from the browser preview'}
                 </span>
               </div>
 
@@ -380,7 +374,6 @@ export default function App() {
                     {kpis.top_chokepoint_code}
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700 border border-emerald-100">
-                    <ArrowUpRight className="h-3 w-3" />
                     idx {kpis.top_chokepoint_score.toFixed(1)}
                   </span>
                 </div>

@@ -38,15 +38,21 @@ export function FMEACapacityAnalytics() {
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
   const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
 
+  const replicates = simulationResult.replicates ?? 1;
   const isStochastic = Boolean(
-    simulationResult.replicates &&
-      simulationResult.replicates > 1 &&
+    replicates > 1 &&
       simulationResult.hourly_capacity.some(
-        (pt) => pt.capacity_5th !== undefined && pt.capacity_95th !== undefined
+        (pt) => pt.capacity_5th != null && pt.capacity_95th != null
       )
   );
 
-  const triggerTimeLabel = `T+${String(triggerHour).padStart(2, '0')}:00`;
+  const recordedTrigger = simulationResult.input_snapshot?.trigger_hour;
+  const resultTrigger = typeof recordedTrigger === 'number'
+    ? recordedTrigger
+    : isStale ? undefined : triggerHour;
+  const triggerTimeLabel = resultTrigger === undefined
+    ? undefined
+    : `T+${String(resultTrigger).padStart(2, '0')}:00`;
 
   const capacityChartData = useMemo(() => {
     return simulationResult.hourly_capacity.map((pt) => {
@@ -56,12 +62,12 @@ export function FMEACapacityAnalytics() {
       return {
         ...pt,
         time_label: normalizedLabel,
-        confidence_band:
-          pt.capacity_5th !== undefined && pt.capacity_95th !== undefined
+        percentile_band:
+          pt.capacity_5th != null && pt.capacity_95th != null
             ? [pt.capacity_5th, pt.capacity_95th]
             : undefined,
         primary_capacity:
-          isStochastic && pt.capacity_median !== undefined
+          isStochastic && pt.capacity_median != null
             ? pt.capacity_median
             : pt.tripartite_mitigated_capacity,
       };
@@ -300,20 +306,22 @@ export function FMEACapacityAnalytics() {
                     data-testid="chart-monte-carlo-badge"
                     className="rounded-full bg-purple-50 px-3 py-0.5 text-[11px] font-bold text-purple-700 border border-purple-200"
                   >
-                    ⚡ 30 Replicates
+                    {replicates} replicates
                   </span>
                 )}
               </div>
-              <span className="rounded-full bg-rose-50 text-rose-700 border border-rose-100 px-3 py-0.5 text-[11px] font-bold">
-                Trigger: {triggerTimeLabel}
-              </span>
+              {triggerTimeLabel && (
+                <span className="rounded-full bg-rose-50 text-rose-700 border border-rose-100 px-3 py-0.5 text-[11px] font-bold">
+                  Trigger: {triggerTimeLabel}
+                </span>
+              )}
             </div>
             <h3 className="mt-2 text-base font-bold text-gray-900">
               How does airport capacity recover after the trigger?
             </h3>
             <p className="mt-1 text-xs text-gray-500 leading-relaxed">
               {isStochastic
-                ? 'Hourly movement capacity (movements/hr) over elapsed time (T+HH:MM), contrasting the 30-replicate Monte Carlo 50th percentile median and 5th–95th percentile confidence band against counterfactual policy benchmarks.'
+                ? `Hourly movement capacity over elapsed time. The 5th–95th percentile band shows the spread of simulated capacity outcomes across ${replicates} Monte Carlo replicates, alongside the 50th percentile median and deterministic policy benchmarks.`
                 : 'Hourly movement capacity (movements/hr) over elapsed time (T+HH:MM), contrasting active Tripartite mitigation against unmitigated collapse and technical-only recovery stalls.'}
             </p>
           </div>
@@ -352,6 +360,19 @@ export function FMEACapacityAnalytics() {
                     color: '#111827',
                   }}
                   formatter={(value: any, name: any) => {
+                    if (
+                      name === '5th–95th percentile band' ||
+                      name === 'percentile_band' ||
+                      String(name).toLowerCase().includes('percentile band')
+                    ) {
+                      if (Array.isArray(value)) {
+                        return [
+                          `${Number(value[0]).toFixed(1)} – ${Number(value[1]).toFixed(1)} mvmt/hr (spread of simulated capacity outcomes)`,
+                          '5th–95th percentile band',
+                        ];
+                      }
+                      return [value, '5th–95th percentile band (spread of simulated capacity outcomes)'];
+                    }
                     if (Array.isArray(value)) {
                       return [`[${Number(value[0]).toFixed(1)}, ${Number(value[1]).toFixed(1)}] mvmt/hr`, name];
                     }
@@ -367,25 +388,33 @@ export function FMEACapacityAnalytics() {
                     fontSize: '11px',
                     paddingTop: '8px',
                   }}
-                />
-                <ReferenceLine
-                  x={triggerTimeLabel}
-                  stroke="#F43F5E"
-                  strokeDasharray="4 4"
-                  label={{
-                    value: `Stage 1 Trigger (${triggerTimeLabel})`,
-                    position: 'top',
-                    fill: '#BE123C',
-                    fontSize: 10,
+                  formatter={(value: string) => {
+                    if (value === '5th–95th percentile band') {
+                      return '5th–95th percentile band (spread of simulated capacity outcomes)';
+                    }
+                    return value;
                   }}
                 />
+                {triggerTimeLabel && (
+                  <ReferenceLine
+                    x={triggerTimeLabel}
+                    stroke="#F43F5E"
+                    strokeDasharray="4 4"
+                    label={{
+                      value: `Stage 1 Trigger (${triggerTimeLabel})`,
+                      position: 'top',
+                      fill: '#BE123C',
+                      fontSize: 10,
+                    }}
+                  />
+                )}
 
-                {/* Layer 1: 5th-95th Percentile Shaded Confidence Band */}
+                {/* Layer 1: Monte Carlo percentile band */}
                 {isStochastic && (
                   <Area
                     type="monotone"
-                    dataKey="confidence_band"
-                    name="Monte Carlo 5th–95th %ile Band [Shaded]"
+                    dataKey="percentile_band"
+                    name="5th–95th percentile band"
                     fill="#C084FC"
                     fillOpacity={0.16}
                     stroke="#A855F7"

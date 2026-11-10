@@ -392,10 +392,20 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
   });
 
   await t.test('Input modifications mark state as stale and preserve previous run results until re-simulated', async () => {
-    // Initial state: inputRevision = 1, simulationResult.provenance.input_revision = 1
+    const original = useCascadeStore.getState();
+    assert.equal(original.simulationResult.input_snapshot?.trigger_hour, original.triggerHour);
+    assert.equal(original.simulationResult.hourly_capacity[0]?.baseline_capacity, original.baselineMovementsPerHour);
+    original.setTriggerHour(original.triggerHour === 0 ? 1 : 0);
+    original.setBaselineMovements(original.baselineMovementsPerHour === 48 ? 60 : 48);
+    const edited = useCascadeStore.getState();
+    assert.notEqual(edited.triggerHour, original.triggerHour);
+    assert.notEqual(edited.baselineMovementsPerHour, original.baselineMovementsPerHour);
+    assert.equal(edited.simulationResult.input_snapshot?.trigger_hour, original.triggerHour);
+    assert.equal(edited.simulationResult.hourly_capacity[0]?.baseline_capacity, original.baselineMovementsPerHour);
+
     const initialRev = useCascadeStore.getState().inputRevision;
     const initialSimRev = useCascadeStore.getState().simulationResult.provenance?.input_revision ?? 0;
-    assert.equal(initialRev, initialSimRev, 'Initially state is fresh (not stale)');
+    assert.ok(initialRev > initialSimRev, 'Editing the trigger and capacity makes the previous result stale');
 
     // Operator edits a node slider
     const firstNodeId = useCascadeStore.getState().nodes[0].id;
