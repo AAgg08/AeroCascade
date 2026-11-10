@@ -9,8 +9,8 @@
 
   body {
     font-family: var(--font-sans);
-    background-color: #0B0F17;
-    color: #F8FAFC;
+    background-color: #F8F9FA;
+    color: #111827;
     overflow-x: hidden;
   }
 
@@ -24,28 +24,32 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* React Flow dark aerospace console overrides */
+/* React Flow Light SaaS overrides */
 .react-flow__attribution {
-  background: rgba(15, 23, 42, 0.75) !important;
-  color: #64748B !important;
+  background: rgba(255, 255, 255, 0.8) !important;
+  color: #9CA3AF !important;
   font-size: 10px !important;
+  border-radius: 9999px !important;
+  padding: 2px 8px !important;
 }
 
 .react-flow__controls {
-  border: 1px solid #1E293B !important;
-  background: #0F172A !important;
-  box-shadow: none !important;
+  border: 1px solid #F3F4F6 !important;
+  background: #FFFFFF !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+  overflow: hidden !important;
 }
 
 .react-flow__controls-button {
-  background: #0F172A !important;
-  border-bottom: 1px solid #1E293B !important;
-  fill: #94A3B8 !important;
+  background: #FFFFFF !important;
+  border-bottom: 1px solid #F3F4F6 !important;
+  fill: #6B7280 !important;
 }
 
 .react-flow__controls-button:hover {
-  background: #1E293B !important;
-  fill: #F8FAFC !important;
+  background: #F9FAFB !important;
+  fill: #111827 !important;
 }
 
 @media print {

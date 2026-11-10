@@ -1,15 +1,28 @@
 import { useEffect } from 'react';
+import {
+  Activity,
+  AlertCircle,
+  ArrowDownRight,
+  ArrowUpRight,
+  FileText,
+  Network,
+  RotateCw,
+  Search,
+  Settings,
+  ShieldCheck,
+  Terminal,
+} from 'lucide-react';
 import { EASAComplianceView } from './components/EASAComplianceView.tsx';
 import { FMEACapacityAnalytics } from './components/FMEACapacityAnalytics.tsx';
 import { PythonBackendView } from './components/PythonBackendView.tsx';
 import { TopologyWorkspace } from './components/TopologyWorkspace.tsx';
 import { useCascadeStore, type WorkspaceTab } from './store/useCascadeStore.ts';
 
-const NAV_ITEMS: { id: WorkspaceTab; label: string }[] = [
-  { id: 'topology', label: 'Topology & DES' },
-  { id: 'fmea-capacity', label: 'FMEA & Capacity' },
-  { id: 'easa-compliance', label: 'Part-IS Dossier' },
-  { id: 'python-engine', label: 'SimPy Backend' },
+const NAV_ITEMS: { id: WorkspaceTab; label: string; icon: typeof Network }[] = [
+  { id: 'topology', label: 'Topology & DES', icon: Network },
+  { id: 'fmea-capacity', label: 'FMEA & Capacity', icon: Activity },
+  { id: 'easa-compliance', label: 'Part-IS Dossier', icon: ShieldCheck },
+  { id: 'python-engine', label: 'SimPy Backend', icon: Terminal },
 ];
 
 export default function App() {
@@ -45,7 +58,7 @@ export default function App() {
   }, [setActiveTab]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0B0F17] text-slate-100">
+    <div className="min-h-screen flex bg-[#F8F9FA] text-gray-900 font-sans antialiased">
       {/* Screen-reader Accessible Live Announcer */}
       <div role="status" aria-live="polite" className="sr-only" data-testid="live-simulation-announcer">
         {isSimulating
@@ -57,193 +70,206 @@ export default function App() {
           : `Simulation complete. Engine: ${simulationResult.provenance?.engine_label}. Input Revision #${simulationResult.provenance?.input_revision ?? 1}.`}
       </div>
 
-      {/* Strict 3-Zone Top Bar Contract */}
-      <header className="no-print sticky top-0 z-30 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-4 gap-y-2 sm:gap-8 border-b border-slate-800 bg-[#0B0F17]/95 backdrop-blur px-4 sm:px-6 py-3">
-        {/* Zone 1: Single text element wordmark */}
-        <a
-          href="#top"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveTab('topology');
-          }}
-          className="text-base sm:text-lg font-bold tracking-tight text-slate-100 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 rounded"
-        >
-          AeroCascade
-        </a>
-
-        {/* Zone 2: 4 concise single-line text navigation links */}
-        <nav
-          aria-label="Primary Workspace Views"
-          className="order-3 sm:order-2 w-full sm:w-auto flex items-center justify-between sm:justify-center gap-3 sm:gap-6 text-xs sm:text-sm font-medium overflow-x-auto border-t border-slate-800/80 sm:border-t-0 pt-2 sm:pt-0"
-        >
-          {NAV_ITEMS.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveTab(item.id)}
-                className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 rounded-t ${
-                  isActive
-                    ? 'border-cyan-400 text-slate-100 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                }`}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* Zone 3: Primary Actions (Single Consistent Execution Center) */}
-        <div className="order-2 sm:order-3 flex items-center gap-2 shrink-0">
+      {/* Clean Icon-Only Vertical Sidebar (Left side, white background) */}
+      <aside
+        aria-label="Sidebar Navigation"
+        className="no-print w-16 sm:w-20 bg-white border-r border-gray-100 flex flex-col items-center justify-between py-6 shrink-0 shadow-xs sticky top-0 h-screen z-40"
+      >
+        <div className="flex flex-col items-center gap-6 w-full">
+          {/* Brand Logo Icon */}
           <button
             type="button"
-            data-testid="run-simulation-btn"
-            onClick={() => executeSimulationOnServer()}
-            disabled={isSimulating}
-            className="inline-flex items-center gap-1.5 rounded-md bg-cyan-500 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F17]"
+            onClick={() => setActiveTab('topology')}
+            className="h-11 w-11 rounded-2xl bg-gray-950 text-white flex items-center justify-center font-extrabold shadow-sm hover:scale-105 transition-transform"
+            title="AeroCascade Aviation Console"
           >
-            {isDeterministicBusy && (
-              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
-            )}
-            <span>{isDeterministicBusy ? 'Simulating...' : 'Run Simulation'}</span>
+            <span className="bg-gradient-to-tr from-emerald-400 to-teal-200 bg-clip-text text-transparent font-black text-xl">
+              A
+            </span>
           </button>
+
+          {/* Navigation Icon Buttons */}
+          <nav aria-label="Main Navigation" className="flex flex-col items-center gap-3 w-full px-2">
+            {NAV_ITEMS.map((item) => {
+              const isActive = activeTab === item.id;
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveTab(item.id)}
+                  title={item.label}
+                  className={`h-11 w-11 rounded-2xl flex items-center justify-center transition-all ${
+                    isActive
+                      ? 'bg-gray-900 text-white shadow-md'
+                      : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <Icon className="h-5 w-5" />
+                  <span className="sr-only">{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Bottom Utility Icon */}
+        <div className="flex flex-col items-center gap-2">
           <button
             type="button"
-            data-testid="run-monte-carlo-btn"
-            onClick={() => executeSimulationOnServer({ replicates: 30 })}
-            disabled={isSimulating}
-            className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/70 bg-purple-950/70 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F17]"
-            title="Run 30 stochastic Monte Carlo replicates with Lognormal repair and Uniform propagation delays"
+            title="Console Settings & Metadata"
+            className="h-10 w-10 rounded-2xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 flex items-center justify-center transition-colors"
           >
-            {isMonteCarloBusy && (
-              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-purple-200 border-t-transparent" />
-            )}
-            <span>{isMonteCarloBusy ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}</span>
+            <Settings className="h-4 w-4" />
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Main Content Container */}
-      <main id="top" className="flex-1 mx-auto w-full max-w-[1440px] px-4 sm:px-6 py-6 space-y-6">
-        {/* Research Context & 4-Column Telemetry Strip */}
-        <section aria-label="Simulation Summary Telemetry" className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
+      {/* Main Content Pane */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        {/* Top Header Bar */}
+        <header className="no-print sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-gray-100 px-6 sm:px-8 py-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
+          <div className="flex items-center gap-4">
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-100">
-                Remote Tower Cybersecurity &amp; Three-Stage Cascading Failure Simulator
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">
+                Dashboard
               </h1>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Illustrative research model grounded in Aggarwal &amp; Dhillon (AIAA Aviation 2026) · Dhillon &amp; Moores (2001) Tripartite Controls
+              <p className="text-xs text-gray-500 font-medium hidden sm:block">
+                AeroCascade · Remote Tower Cybersecurity &amp; Cascading Failure Simulator
               </p>
             </div>
-
-            {/* Result Provenance Badge */}
-            <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
-              <span
-                data-testid="provenance-engine-badge"
-                className={`inline-flex items-center px-2.5 py-1 rounded text-[11px] font-semibold border ${
-                  simulationResult.provenance?.engine === 'fastapi-python'
-                    ? 'bg-cyan-950/80 text-cyan-300 border-cyan-800'
-                    : simulationResult.provenance?.is_fallback
-                    ? 'bg-amber-950/80 text-amber-300 border-amber-800'
-                    : 'bg-slate-900 text-slate-300 border-slate-700'
-                }`}
-              >
-                ● ENGINE: {simulationResult.provenance?.engine === 'fastapi-python'
-                  ? 'FastAPI + SimPy (Authoritative)'
-                  : simulationResult.provenance?.is_fallback
-                  ? 'In-Browser Client Preview (Fallback Active)'
-                  : 'In-Browser Client Preview'}
-              </span>
-              {simulationResult.run_id && (
-                <span className="text-slate-400 text-[11px]" title={`Authoritative Run ID: ${simulationResult.run_id}`}>
-                  RUN: {simulationResult.run_id.slice(0, 8)}
-                </span>
-              )}
-              {simulationResult.input_hash && (
-                <span className="text-slate-400 text-[11px]" title={`Canonical Input SHA256: ${simulationResult.input_hash}`}>
-                  HASH: {simulationResult.input_hash.slice(0, 8)}
-                </span>
-              )}
-              <span className="text-slate-400">
-                REV #{simulationResult.provenance?.input_revision ?? 1}
-              </span>
-              {isStale && (
-                <span
-                  data-testid="provenance-stale-badge"
-                  className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-950/90 text-amber-300 border border-amber-700"
-                >
-                  STALE (PREV RUN · REV #{simulationResult.provenance?.input_revision ?? 1})
-                </span>
-              )}
-              {simulationResult.replicates && simulationResult.replicates > 1 && (
-                <span
-                  data-testid="provenance-replicates-badge"
-                  className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-950/80 text-purple-300 border border-purple-800"
-                >
-                  ⚡ MONTE CARLO ({simulationResult.replicates} REPS)
-                </span>
-              )}
-              {simulationResult.provenance?.is_fallback && (
-                <span className="text-amber-400 text-[11px]" title={simulationResult.provenance.fallback_reason}>
-                  (FALLBACK ACTIVE)
-                </span>
-              )}
+            <div className="hidden lg:flex items-center gap-2 rounded-full bg-gray-50 border border-gray-200/60 px-4 py-1.5 text-xs text-gray-500 shadow-inner">
+              <Search className="h-3.5 w-3.5 text-gray-400" />
+              <span>AIAA 2026 Reference Model · Dhillon &amp; Moores (2001)</span>
             </div>
           </div>
 
-          {/* Stale Result Banner when inputs were modified since last simulation run */}
+          {/* Header Action Controls */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Provenance Badge */}
+            <span
+              data-testid="provenance-engine-badge"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/80 px-3 py-1 text-xs font-semibold text-gray-700 shadow-xs"
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              <span>
+                {simulationResult.provenance?.engine === 'fastapi-python'
+                  ? 'FastAPI + SimPy (Authoritative)'
+                  : simulationResult.provenance?.is_fallback
+                  ? 'Client Preview (Fallback)'
+                  : 'Client Preview'}
+              </span>
+            </span>
+
+            {isStale && (
+              <span
+                data-testid="provenance-stale-badge"
+                className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 text-xs font-semibold shadow-xs"
+              >
+                Stale (Rev #{simulationResult.provenance?.input_revision ?? 1})
+              </span>
+            )}
+
+            {simulationResult.replicates && simulationResult.replicates > 1 && (
+              <span
+                data-testid="provenance-replicates-badge"
+                className="inline-flex items-center gap-1 rounded-full bg-purple-50 text-purple-700 border border-purple-200 px-3 py-1 text-xs font-semibold shadow-xs"
+              >
+                ⚡ {simulationResult.replicates} Replicates
+              </span>
+            )}
+
+            {/* Run Buttons (Pill shaped with smooth rounding) */}
+            <button
+              type="button"
+              data-testid="run-simulation-btn"
+              onClick={() => executeSimulationOnServer()}
+              disabled={isSimulating}
+              className="inline-flex items-center gap-2 rounded-full bg-gray-900 px-5 py-2 text-xs font-semibold text-white hover:bg-black disabled:opacity-60 transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+            >
+              {isDeterministicBusy ? (
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                <RotateCw className="h-3.5 w-3.5" />
+              )}
+              <span>{isDeterministicBusy ? 'Simulating...' : 'Run Simulation'}</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="run-monte-carlo-btn"
+              onClick={() => executeSimulationOnServer({ replicates: 30 })}
+              disabled={isSimulating}
+              className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-60 transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+              title="Run 30 stochastic Monte Carlo replicates with Lognormal repair and Uniform propagation delays"
+            >
+              {isMonteCarloBusy && (
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              )}
+              <span>{isMonteCarloBusy ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Reps)'}</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Main Content Workspace */}
+        <main className="p-6 sm:p-8 space-y-8 max-w-[1600px] w-full mx-auto">
+          {/* Stale Result Alert Banner */}
           {isStale && (
             <div
               data-testid="stale-result-banner"
               role="status"
-              className="rounded-md border border-amber-600/70 bg-amber-950/40 px-4 py-3 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono"
+              className="rounded-3xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50/50 p-4 sm:p-5 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm"
             >
-              <div className="flex items-start sm:items-center gap-2">
-                <span className="text-amber-400 font-bold shrink-0">⚠ STALE RESULT:</span>
-                <span className="text-slate-200 font-sans">
-                  Inputs modified since last run (Current Rev #{inputRevision}) — displaying previous results from Rev #{simulationResult.provenance?.input_revision ?? 1}. Click Run Simulation to evaluate current configuration.
+              <div className="flex items-center gap-3">
+                <span className="rounded-full bg-amber-500 text-white p-1.5 shadow-xs">
+                  <AlertCircle className="h-3.5 w-3.5" />
                 </span>
+                <div>
+                  <span className="font-bold text-amber-950">Inputs modified since last run: </span>
+                  <span className="text-amber-800">
+                    Current editor is at Rev #{inputRevision} — displaying previous results from Rev #{simulationResult.provenance?.input_revision ?? 1}.
+                  </span>
+                </div>
               </div>
               <button
                 type="button"
                 data-testid="stale-run-btn"
                 onClick={() => executeSimulationOnServer()}
                 disabled={isSimulating}
-                className="rounded border border-amber-500/80 bg-amber-500/20 px-3 py-1 font-semibold text-amber-200 hover:bg-amber-500/30 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                className="rounded-full bg-amber-600 px-4 py-1.5 font-semibold text-white hover:bg-amber-700 shadow-sm transition-all whitespace-nowrap shrink-0"
               >
                 Run Simulation to Update
               </button>
             </div>
           )}
 
+          {/* Backend Error Alert Banner */}
           {backendError && (
             <div
               data-testid="backend-error-banner"
               role="alert"
-              className="rounded-md border border-rose-800/80 bg-rose-950/40 p-4 text-xs font-mono"
+              className="rounded-3xl border border-rose-200 bg-rose-50/80 p-5 text-xs text-rose-900 shadow-sm space-y-3"
             >
               <div className="flex items-center justify-between">
-                <span className="font-bold text-rose-300">
-                  ⚠ AUTHORITATIVE SIMULATION BACKEND ERROR
+                <span className="font-bold text-rose-800 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-rose-600" />
+                  AUTHORITATIVE SIMULATION BACKEND ERROR
                 </span>
                 <button
                   type="button"
                   onClick={clearBackendError}
-                  className="text-slate-400 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 rounded px-1"
+                  className="rounded-full px-2 py-0.5 text-rose-500 hover:text-rose-800 hover:bg-rose-100"
                 >
                   ✕ Dismiss
                 </button>
               </div>
-              <p className="mt-1 text-slate-300 font-sans">{backendError}</p>
-              <div className="mt-3 flex flex-wrap items-center gap-3">
+              <p className="text-rose-700">{backendError}</p>
+              <div className="flex flex-wrap items-center gap-3 pt-1">
                 <button
                   type="button"
                   onClick={() => executeSimulationOnServer()}
                   disabled={isSimulating}
-                  className="rounded border border-rose-700 bg-rose-900/60 px-3 py-1 font-semibold text-rose-200 hover:bg-rose-800 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                  className="rounded-full bg-rose-600 px-4 py-1.5 font-semibold text-white hover:bg-rose-700 shadow-sm"
                 >
                   Retry Authoritative Simulation
                 </button>
@@ -251,116 +277,141 @@ export default function App() {
                   type="button"
                   onClick={() => executeSimulationOnServer({ allowLegacyDemo: true })}
                   disabled={isSimulating}
-                  className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-slate-300 hover:bg-slate-700 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                  className="rounded-full bg-white border border-rose-200 px-4 py-1.5 font-semibold text-rose-700 hover:bg-rose-100/60 shadow-xs"
                 >
-                  Run Legacy Demo Mode (Explicitly Uncalibrated)
+                  Run Legacy Demo Mode
                 </button>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Metric 1: Mean Adjusted Risk vs Raw RPN */}
-            <div className="rounded-md border border-slate-800 bg-[#111827] p-4">
-              <div className="text-xs font-mono uppercase tracking-wider text-slate-400">
-                MEAN ADJUSTED RISK SCORE
+          {/* Hero KPI Banner Card (Styled after reference dashboard) */}
+          <section
+            aria-label="Simulation Summary Telemetry"
+            className="rounded-3xl bg-white p-6 sm:p-8 shadow-sm border border-gray-100"
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 pb-8 border-b border-gray-100">
+              {/* Giant Metric Display */}
+              <div>
+                <div className="flex items-baseline gap-3">
+                  <span
+                    data-testid="kpi-min-capacity"
+                    className="text-5xl sm:text-6xl font-extrabold tracking-tight text-gray-900"
+                  >
+                    {kpis.min_hourly_capacity.toFixed(0)}
+                  </span>
+                  <span className="text-xl sm:text-2xl font-bold text-gray-400">
+                    / {baselineMovementsPerHour}
+                  </span>
+                </div>
+                <div className="text-sm font-medium text-gray-500 mt-1">
+                  minimum hourly movements / hr (throughput retention floor)
+                </div>
               </div>
-              <div className="mt-1 flex items-baseline">
-                <span
-                  className="text-3xl font-mono font-bold tabular-nums text-slate-100"
-                  data-testid="kpi-mean-residual-rpn"
-                >
-                  {kpis.mean_residual_rpn.toFixed(1)}
-                </span>
-                <span className="ml-1.5 text-xs font-mono text-slate-400">
-                  / {kpis.mean_raw_rpn.toFixed(1)} RAW RPN
-                </span>
-              </div>
-              <div className="mt-1 text-xs font-mono text-emerald-400 tabular-nums">
-                EST. MITIGATION: -{(100 - (kpis.mean_residual_rpn / Math.max(1, kpis.mean_raw_rpn)) * 100).toFixed(1)}% (MODEL DAMPING)
+
+              {/* Smooth multi-stop gradient progress bar */}
+              <div className="flex-1 max-w-2xl space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                    {kpis.capacity_retention_pct.toFixed(1)}% nominal capacity floor
+                  </span>
+                  <span className="text-gray-500 font-medium">
+                    {kpis.total_disrupted_movements} movements lost deficit
+                  </span>
+                </div>
+                {/* Horizontal progress bar with smooth vibrant gradient */}
+                <div className="relative h-7 w-full rounded-full bg-gray-100/80 shadow-inner overflow-hidden p-1 flex items-center">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-orange-400 via-amber-300 to-emerald-400 shadow-sm flex items-center justify-end pr-2 transition-all duration-500"
+                    style={{ width: `${Math.min(100, Math.max(12, kpis.capacity_retention_pct))}%` }}
+                  >
+                    <div className="h-4 w-1 rounded-full bg-gray-900 shadow-sm" />
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Metric 2: Minimum Hourly Capacity */}
-            <div className="rounded-md border border-slate-800 bg-[#111827] p-4">
-              <div className="text-xs font-mono uppercase tracking-wider text-slate-400">
-                MIN HOURLY THROUGHPUT
-              </div>
-              <div className="mt-1 flex items-baseline">
-                <span
-                  className="text-3xl font-mono font-bold tabular-nums text-slate-100"
-                  data-testid="kpi-min-capacity"
-                >
-                  {kpis.min_hourly_capacity.toFixed(1)}
+            {/* 3 Sub-Metrics with subtle up/down trend pill badges */}
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-3 pt-6">
+              {/* Metric 1 */}
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-gray-500">Mean Adjusted Risk Score</span>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <span
+                    data-testid="kpi-mean-residual-rpn"
+                    className="text-2xl sm:text-3xl font-extrabold text-gray-900"
+                  >
+                    {kpis.mean_residual_rpn.toFixed(1)}
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-bold text-rose-600 border border-rose-100">
+                    <ArrowDownRight className="h-3 w-3" />
+                    -{(100 - (kpis.mean_residual_rpn / Math.max(1, kpis.mean_raw_rpn)) * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <span className="text-xs text-gray-400 mt-1 font-medium">
+                  from {kpis.mean_raw_rpn.toFixed(1)} raw RPN (tripartite mitigation)
                 </span>
-                <span className="ml-1.5 text-xs font-mono text-slate-400">
-                  / {baselineMovementsPerHour} MVMT/HR
+              </div>
+
+              {/* Metric 2 */}
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-gray-500">Recovery Time Window</span>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <span
+                    data-testid="kpi-recovery-hours"
+                    className="text-2xl sm:text-3xl font-extrabold text-amber-600"
+                  >
+                    {kpis.recovery_window_hours} hrs
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700 border border-amber-100">
+                    &lt; 90% cap
+                  </span>
+                </div>
+                <span className="text-xs text-gray-400 mt-1 font-medium">
+                  {kpis.total_disrupted_movements} movements estimated loss
                 </span>
               </div>
-              <div className="mt-1 text-xs font-mono text-cyan-300 tabular-nums">
-                RETENTION FLOOR: {kpis.capacity_retention_pct.toFixed(1)}% NOMINAL
+
+              {/* Metric 3 */}
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-gray-500">Primary Graph Chokepoint</span>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <span className="text-2xl sm:text-3xl font-extrabold text-gray-900">
+                    {kpis.top_chokepoint_code}
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700 border border-emerald-100">
+                    <ArrowUpRight className="h-3 w-3" />
+                    idx {kpis.top_chokepoint_score.toFixed(1)}
+                  </span>
+                </div>
+                <span className="text-xs text-gray-400 mt-1 font-medium">
+                  Avg control score: {(kpis.average_control_score ?? kpis.tripartite_balance_index).toFixed(0)}%
+                </span>
               </div>
             </div>
+          </section>
 
-            {/* Metric 3: Time Below 90% Capacity & Estimated Lost Movement Capacity */}
-            <div className="rounded-md border border-slate-800 bg-[#111827] p-4">
-              <div className="text-xs font-mono uppercase tracking-wider text-slate-400">
-                TIME BELOW 90% CAPACITY
-              </div>
-              <div className="mt-1 flex items-baseline">
-                <span
-                  className="text-3xl font-mono font-bold tabular-nums text-amber-300"
-                  data-testid="kpi-recovery-hours"
-                >
-                  {kpis.recovery_window_hours}
-                </span>
-                <span className="ml-1.5 text-xs font-mono text-slate-400">
-                  HOURS (PROVISIONAL)
-                </span>
-              </div>
-              <div className="mt-1 text-xs font-mono text-rose-400 tabular-nums">
-                LOST CAPACITY: {kpis.total_disrupted_movements} MOVEMENTS (EST. DEFICIT)
-              </div>
+          {/* Active Workspace View */}
+          <div className="transition-opacity duration-200">
+            {activeTab === 'topology' && <TopologyWorkspace />}
+            {activeTab === 'fmea-capacity' && <FMEACapacityAnalytics />}
+            {activeTab === 'easa-compliance' && <EASAComplianceView />}
+            {activeTab === 'python-engine' && <PythonBackendView />}
+          </div>
+        </main>
+
+        {/* Clean Light Footer */}
+        <footer className="no-print border-t border-gray-100 bg-white px-8 py-5 text-xs text-gray-400">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              AeroCascade · Modernizing Aviation Infrastructure (Aggarwal &amp; Dhillon, AIAA Aviation 2026)
             </div>
-
-            {/* Metric 4: Primary Chokepoint & Average Control Score */}
-            <div className="rounded-md border border-slate-800 bg-[#111827] p-4">
-              <div className="text-xs font-mono uppercase tracking-wider text-slate-400">
-                PRIMARY GRAPH CHOKEPOINT
-              </div>
-              <div className="mt-1 flex items-baseline">
-                <span className="text-2xl font-mono font-bold tabular-nums text-cyan-300">
-                  {kpis.top_chokepoint_code}
-                </span>
-                <span className="ml-2 text-xs font-mono text-slate-400 tabular-nums">
-                  IDX {kpis.top_chokepoint_score.toFixed(1)}
-                </span>
-              </div>
-              <div className="mt-1 text-xs font-mono text-slate-300 tabular-nums">
-                AVG CONTROL SCORE: {(kpis.average_control_score ?? kpis.tripartite_balance_index).toFixed(1)}% (0-100)
-              </div>
+            <div className="text-[11px] text-gray-400">
+              EASA Part-IS (EU) 2022/1645 &amp; 2023/203 · EUROCAE ER-040 · PSOE Maturity
             </div>
           </div>
-        </section>
-
-        {/* Active Workspace View */}
-        {activeTab === 'topology' && <TopologyWorkspace />}
-        {activeTab === 'fmea-capacity' && <FMEACapacityAnalytics />}
-        {activeTab === 'easa-compliance' && <EASAComplianceView />}
-        {activeTab === 'python-engine' && <PythonBackendView />}
-      </main>
-
-      {/* Clean Quiet Footer */}
-      <footer className="no-print border-t border-slate-800/80 bg-[#0B0F17] px-6 py-4 text-xs text-slate-400">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            AeroCascade · Modernizing Aviation Infrastructure—Cybersecurity Challenges in the Era of Remote Tower Operations (Aggarwal &amp; Dhillon, AIAA Aviation 2026)
-          </div>
-          <div className="font-mono text-[11px] text-slate-400">
-            EASA Part-IS (EU) 2022/1645 &amp; 2023/203 · EUROCAE ER-040 · PSOE Maturity
-          </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
   );
 }
