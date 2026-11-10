@@ -390,4 +390,38 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(useCascadeStore.getState().pendingRequestsCount, 0, 'Pending requests count must be exactly 0');
     assert.equal(useCascadeStore.getState().isSimulating, false, 'isSimulating must be false after all dispatches settle');
   });
+
+  await t.test('Input modifications mark state as stale and preserve previous run results until re-simulated', async () => {
+    // Initial state: inputRevision = 1, simulationResult.provenance.input_revision = 1
+    const initialRev = useCascadeStore.getState().inputRevision;
+    const initialSimRev = useCascadeStore.getState().simulationResult.provenance?.input_revision ?? 0;
+    assert.equal(initialRev, initialSimRev, 'Initially state is fresh (not stale)');
+
+    // Operator edits a node slider
+    const firstNodeId = useCascadeStore.getState().nodes[0].id;
+    useCascadeStore.getState().updateNodeTripartite(firstNodeId, { technical: 95 });
+
+    const updatedRev = useCascadeStore.getState().inputRevision;
+    const currentSimRev = useCascadeStore.getState().simulationResult.provenance?.input_revision ?? 0;
+
+    assert.equal(updatedRev, initialRev + 1, 'Input revision must increment');
+    assert.equal(currentSimRev, initialSimRev, 'Simulation result must preserve previous run revision');
+    assert.ok(updatedRev > currentSimRev, 'State is detected as stale: inputRevision > simulationResult revision');
+
+    // Operator runs simulation to update
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify(makeMockResponse('run-rev-updated', updatedRev)), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    await useCascadeStore.getState().executeSimulationOnServer();
+
+    const afterRunRev = useCascadeStore.getState().inputRevision;
+    const afterRunSimRev = useCascadeStore.getState().simulationResult.provenance?.input_revision ?? 0;
+
+    assert.equal(afterRunRev, afterRunSimRev, 'After simulation, result revision matches input revision (fresh)');
+    assert.equal(useCascadeStore.getState().simulationResult.run_id, 'run-rev-updated');
+  });
 });
