@@ -11,10 +11,13 @@ const DEFAULT_FILES = [
 ];
 
 export function PythonBackendView() {
-  const { simulationResult, executeSimulationOnServer, isSimulating } = useCascadeStore();
+  const { simulationResult, executeSimulationOnServer, isSimulating, activeRunMode } = useCascadeStore();
   const [sources, setSources] = useState<Record<string, string>>({});
   const [selectedFile, setSelectedFile] = useState<string>('simpy_engine.py');
   const [copied, setCopied] = useState(false);
+
+  const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
+  const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
 
   useEffect(() => {
     fetch('/api/backend-source')
@@ -59,19 +62,27 @@ export function PythonBackendView() {
             type="button"
             onClick={() => executeSimulationOnServer()}
             disabled={isSimulating}
-            className="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
-            <Play className="h-3.5 w-3.5" />
-            <span>{isSimulating ? 'Running POST /api/simulate...' : 'Execute Deterministic Run'}</span>
+            {isDeterministicBusy ? (
+              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span>{isDeterministicBusy ? 'Running POST /api/simulate...' : 'Execute Deterministic Run'}</span>
           </button>
           <button
             type="button"
             onClick={() => executeSimulationOnServer({ replicates: 30 })}
             disabled={isSimulating}
-            className="inline-flex items-center gap-2 rounded-md border border-purple-500/70 bg-purple-950/70 px-4 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-2 rounded-md border border-purple-500/70 bg-purple-950/70 px-4 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
           >
-            <Play className="h-3.5 w-3.5 text-purple-400" />
-            <span>{isSimulating ? 'Running (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}</span>
+            {isMonteCarloBusy ? (
+              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-purple-200 border-t-transparent" />
+            ) : (
+              <Play className="h-3.5 w-3.5 text-purple-400" />
+            )}
+            <span>{isMonteCarloBusy ? 'Running (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}</span>
           </button>
         </div>
       </section>

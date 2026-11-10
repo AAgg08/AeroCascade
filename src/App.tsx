@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { EASAComplianceView } from './components/EASAComplianceView.tsx';
 import { FMEACapacityAnalytics } from './components/FMEACapacityAnalytics.tsx';
 import { PythonBackendView } from './components/PythonBackendView.tsx';
@@ -18,15 +19,44 @@ export default function App() {
     simulationResult,
     executeSimulationOnServer,
     isSimulating,
+    activeRunMode,
+    inputRevision,
     baselineMovementsPerHour,
     backendError,
     clearBackendError,
   } = useCascadeStore();
 
+  const isStale = inputRevision > (simulationResult.provenance?.input_revision ?? 0);
   const kpis = simulationResult.summary_kpis;
+
+  const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
+  const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
+
+  useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash.replace('#', '') as WorkspaceTab;
+      if (['topology', 'fmea-capacity', 'easa-compliance', 'python-engine'].includes(hash)) {
+        setActiveTab(hash);
+      }
+    };
+    handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [setActiveTab]);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0B0F17] text-slate-100">
+      {/* Screen-reader Accessible Live Announcer */}
+      <div role="status" aria-live="polite" className="sr-only" data-testid="live-simulation-announcer">
+        {isSimulating
+          ? `Simulation in progress (${activeRunMode === 'monte-carlo' ? '30 Monte Carlo replicates' : 'deterministic causal engine'})...`
+          : backendError
+          ? `Simulation error: ${backendError}`
+          : isStale
+          ? `Inputs modified. Editor is at Revision #${inputRevision}, displaying previous results from Revision #${simulationResult.provenance?.input_revision ?? 1}.`
+          : `Simulation complete. Engine: ${simulationResult.provenance?.engine_label}. Input Revision #${simulationResult.provenance?.input_revision ?? 1}.`}
+      </div>
+
       {/* Strict 3-Zone Top Bar Contract */}
       <header className="no-print sticky top-0 z-30 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-4 gap-y-2 sm:gap-8 border-b border-slate-800 bg-[#0B0F17]/95 backdrop-blur px-4 sm:px-6 py-3">
         {/* Zone 1: Single text element wordmark */}
@@ -36,7 +66,7 @@ export default function App() {
             e.preventDefault();
             setActiveTab('topology');
           }}
-          className="text-base sm:text-lg font-bold tracking-tight text-slate-100 whitespace-nowrap shrink-0"
+          className="text-base sm:text-lg font-bold tracking-tight text-slate-100 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 rounded"
         >
           AeroCascade
         </a>
@@ -53,7 +83,7 @@ export default function App() {
                 key={item.id}
                 type="button"
                 onClick={() => setActiveTab(item.id)}
-                className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+                className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 rounded-t ${
                   isActive
                     ? 'border-cyan-400 text-slate-100 font-semibold'
                     : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
@@ -65,26 +95,32 @@ export default function App() {
           })}
         </nav>
 
-        {/* Zone 3: Primary Actions */}
+        {/* Zone 3: Primary Actions (Single Consistent Execution Center) */}
         <div className="order-2 sm:order-3 flex items-center gap-2 shrink-0">
           <button
             type="button"
             data-testid="run-simulation-btn"
             onClick={() => executeSimulationOnServer()}
             disabled={isSimulating}
-            className="rounded-md bg-cyan-500 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-1.5 rounded-md bg-cyan-500 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F17]"
           >
-            {isSimulating ? 'Simulating...' : 'Run Simulation'}
+            {isDeterministicBusy && (
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+            )}
+            <span>{isDeterministicBusy ? 'Simulating...' : 'Run Simulation'}</span>
           </button>
           <button
             type="button"
             data-testid="run-monte-carlo-btn"
             onClick={() => executeSimulationOnServer({ replicates: 30 })}
             disabled={isSimulating}
-            className="rounded-md border border-purple-500/70 bg-purple-950/70 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/70 bg-purple-950/70 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F17]"
             title="Run 30 stochastic Monte Carlo replicates with Lognormal repair and Uniform propagation delays"
           >
-            {isSimulating ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}
+            {isMonteCarloBusy && (
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-purple-200 border-t-transparent" />
+            )}
+            <span>{isMonteCarloBusy ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}</span>
           </button>
         </div>
       </header>
@@ -115,7 +151,11 @@ export default function App() {
                     : 'bg-slate-900 text-slate-300 border-slate-700'
                 }`}
               >
-                ● ENGINE: {simulationResult.provenance?.engine_label ?? 'In-Browser Client (TypeScript)'}
+                ● ENGINE: {simulationResult.provenance?.engine === 'fastapi-python'
+                  ? 'FastAPI + SimPy (Authoritative)'
+                  : simulationResult.provenance?.is_fallback
+                  ? 'In-Browser Client Preview (Fallback Active)'
+                  : 'In-Browser Client Preview'}
               </span>
               {simulationResult.run_id && (
                 <span className="text-slate-400 text-[11px]" title={`Authoritative Run ID: ${simulationResult.run_id}`}>
@@ -130,6 +170,14 @@ export default function App() {
               <span className="text-slate-400">
                 REV #{simulationResult.provenance?.input_revision ?? 1}
               </span>
+              {isStale && (
+                <span
+                  data-testid="provenance-stale-badge"
+                  className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-950/90 text-amber-300 border border-amber-700"
+                >
+                  STALE (PREV RUN · REV #{simulationResult.provenance?.input_revision ?? 1})
+                </span>
+              )}
               {simulationResult.replicates && simulationResult.replicates > 1 && (
                 <span
                   data-testid="provenance-replicates-badge"
@@ -146,9 +194,35 @@ export default function App() {
             </div>
           </div>
 
+          {/* Stale Result Banner when inputs were modified since last simulation run */}
+          {isStale && (
+            <div
+              data-testid="stale-result-banner"
+              role="status"
+              className="rounded-md border border-amber-600/70 bg-amber-950/40 px-4 py-3 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono"
+            >
+              <div className="flex items-start sm:items-center gap-2">
+                <span className="text-amber-400 font-bold shrink-0">⚠ STALE RESULT:</span>
+                <span className="text-slate-200 font-sans">
+                  Inputs modified since last run (Current Rev #{inputRevision}) — displaying previous results from Rev #{simulationResult.provenance?.input_revision ?? 1}. Click Run Simulation to evaluate current configuration.
+                </span>
+              </div>
+              <button
+                type="button"
+                data-testid="stale-run-btn"
+                onClick={() => executeSimulationOnServer()}
+                disabled={isSimulating}
+                className="rounded border border-amber-500/80 bg-amber-500/20 px-3 py-1 font-semibold text-amber-200 hover:bg-amber-500/30 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+              >
+                Run Simulation to Update
+              </button>
+            </div>
+          )}
+
           {backendError && (
             <div
               data-testid="backend-error-banner"
+              role="alert"
               className="rounded-md border border-rose-800/80 bg-rose-950/40 p-4 text-xs font-mono"
             >
               <div className="flex items-center justify-between">
@@ -158,7 +232,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={clearBackendError}
-                  className="text-slate-400 hover:text-slate-200"
+                  className="text-slate-400 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 rounded px-1"
                 >
                   ✕ Dismiss
                 </button>
@@ -168,14 +242,16 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => executeSimulationOnServer()}
-                  className="rounded border border-rose-700 bg-rose-900/60 px-3 py-1 font-semibold text-rose-200 hover:bg-rose-800"
+                  disabled={isSimulating}
+                  className="rounded border border-rose-700 bg-rose-900/60 px-3 py-1 font-semibold text-rose-200 hover:bg-rose-800 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
                 >
                   Retry Authoritative Simulation
                 </button>
                 <button
                   type="button"
                   onClick={() => executeSimulationOnServer({ allowLegacyDemo: true })}
-                  className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-slate-300 hover:bg-slate-700"
+                  disabled={isSimulating}
+                  className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-slate-300 hover:bg-slate-700 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                 >
                   Run Legacy Demo Mode (Explicitly Uncalibrated)
                 </button>
