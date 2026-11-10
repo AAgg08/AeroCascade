@@ -183,6 +183,19 @@ class HourlyCapacityPoint(BaseModel):
     active_stage: str
     estimated_lost_capacity_cumulative: int = 0
     delayed_flights_cumulative: int = 0
+    capacity_median: Optional[float] = None
+    capacity_5th: Optional[float] = None
+    capacity_95th: Optional[float] = None
+
+
+class HourlyCapacityPercentiles(BaseModel):
+    """Per-hour Monte Carlo confidence band: median, 5th and 95th percentiles of mitigated capacity."""
+    hour: int
+    time_label: str
+    baseline_capacity: float
+    capacity_median: float
+    capacity_5th: float
+    capacity_95th: float
 
 
 class NodeCentralityMetric(BaseModel):
@@ -261,6 +274,7 @@ class ResultProvenance(BaseModel):
     model_version: str = "2.0.0-causal"
     schema_version: str = "2.0.0"
     input_revision: int = 1
+    replicates: int = 1
     generated_at: str
     is_fallback: bool = False
     fallback_reason: Optional[str] = None
@@ -272,6 +286,7 @@ class SimulationRequest(BaseModel):
     baseline_movements_per_hour: int = Field(default=48, ge=1, le=240)
     trigger_hour: int = Field(default=4, ge=0, le=168)
     random_seed: int = Field(default=2026)
+    replicates: int = Field(default=1, ge=1, le=30, description="Number of Monte Carlo replicates (1 = deterministic baseline)")
     nodes: List[SystemNodeModel] = Field(default_factory=list)
     edges: List[DependencyEdgeModel] = Field(default_factory=list)
     initiating_events: List[InitiatingEvent] = Field(default_factory=list)
@@ -292,9 +307,14 @@ class SimulationResponse(BaseModel):
     input_hash: str = ""
     parameter_set_version: str = "2026.1"
     random_seed: int = 2026
+    replicates: int = 1
     summary_kpis: Dict[str, Any]
     events: List[DiscreteEventRecord]
     hourly_capacity: List[HourlyCapacityPoint]
+    stochastic_capacity: Optional[List[HourlyCapacityPercentiles]] = None
+    capacity_median: Optional[List[float]] = None
+    capacity_5th: Optional[List[float]] = None
+    capacity_95th: Optional[List[float]] = None
     node_analytics: List[NodeCentralityMetric]
     easa_notification: EASAPartISNotification
     recovery_metrics: Optional[RecoveryMetrics] = None

@@ -12,6 +12,14 @@ Verifies all 9 causal simulation and graph invariants:
 9. Response contract provenance, run ID, and input snapshot hash consistency.
 """
 
+import sys
+from pathlib import Path
+
+# Ensure project root is in sys.path regardless of working directory
+project_root = Path(__file__).resolve().parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 import unittest
 from backend.graph_engine import build_dependency_graph
 from backend.models import (
@@ -470,6 +478,200 @@ class TestAeroCascadeAcceptanceFixtures(unittest.TestCase):
             run_cascade_simulation(
                 SimulationRequest(scenario_id="err", horizon_hours=10, trigger_hour=10, nodes=[node_single])
             )
+
+    def test_fixture_10_deterministic_replicates_1_matches_baseline(self):
+        """Prompt 3 Verification: Deterministic run (replicates=1) matches baseline exactly."""
+        node = make_test_node("n-det", "DET", repair_hours=3.0)
+        svc = AirportService(
+            service_id="svc-det",
+            name="Deterministic Service",
+            required_node_ids=["n-det"],
+            degraded_availability_factor=0.5,
+        )
+        req_default = SimulationRequest(
+            scenario_id="fixture-10-default",
+            horizon_hours=10,
+            baseline_movements_per_hour=48,
+            trigger_hour=2,
+            nodes=[node],
+            edges=[],
+            services=[svc],
+            initiating_events=[InitiatingEvent(node_id="n-det", event_time_hours=2.0)],
+        )
+        req_explicit_1 = SimulationRequest(
+            scenario_id="fixture-10-explicit-1",
+            horizon_hours=10,
+            baseline_movements_per_hour=48,
+            trigger_hour=2,
+            replicates=1,
+            nodes=[node],
+            edges=[],
+            services=[svc],
+            initiating_events=[InitiatingEvent(node_id="n-det", event_time_hours=2.0)],
+        )
+
+        res_default = run_cascade_simulation(req_default)
+        res_explicit = run_cascade_simulation(req_explicit_1)
+
+        # Baseline metrics match hand-computed piecewise integral (72.0 mvmt)
+        self.assertEqual(res_default.replicates, 1)
+        self.assertEqual(res_explicit.replicates, 1)
+        self.assertAlmostEqual(res_default.summary_kpis["estimated_lost_movement_capacity"], 72.0, places=1)
+        self.assertAlmostEqual(res_explicit.summary_kpis["estimated_lost_movement_capacity"], 72.0, places=1)
+
+        # Hourly capacities match identically between default and explicit replicates=1
+        for h in range(10):
+            self.assertEqual(
+                res_default.hourly_capacity[h].tripartite_mitigated_capacity,
+                res_explicit.hourly_capacity[h].tripartite_mitigated_capacity,
+            )
+
+    def test_fixture_11_stochastic_replicates_30_confidence_bands(self):
+        """Prompt 3 Verification: Stochastic run (replicates=30) calculates valid 5th/95th percentile confidence bands."""
+        node_a = make_test_node("n-stoch-a", "STA", CascadeStage.STAGE_1_TRIGGER, repair_hours=2.0)
+        node_b = make_test_node("n-stoch-b", "STB", CascadeStage.STAGE_2_PROPAGATION, repair_hours=3.0)
+        edge = DependencyEdgeModel(
+            id="e-sta-stb",
+            source="n-stoch-a",
+            target="n-stoch-b",
+            coupling_weight=0.8,
+            propagation_delay_hours=1.0,
+            propagation_mechanism="Sensor feed telemetry",
+            protocol_layer="Application",
+            distance_weight=1.0,
+        )
+        svc = AirportService(
+            service_id="svc-stoch",
+            name="Stochastic Multi-Node Service",
+            required_node_ids=["n-stoch-a", "n-stoch-b"],
+            degraded_availability_factor=0.25,
+        )
+        req_stoch = SimulationRequest(
+            scenario_id="fixture-11-stoch-30",
+            horizon_hours=16,
+            baseline_movements_per_hour=48,
+            trigger_hour=2,
+            random_seed=2026,
+            replicates=30,
+            nodes=[node_a, node_b],
+            edges=[edge],
+            services=[svc],
+            initiating_events=[InitiatingEvent(node_id="n-stoch-a", event_time_hours=2.0)],
+        )
+
+        res = run_cascade_simulation(req_stoch)
+
+        # Check response metadata
+        self.assertEqual(res.replicates, 30)
+        self.assertIsNotNone(res.stochastic_capacity)
+        self.assertEqual(len(res.stochastic_capacity), 16)
+        self.assertIsNotNone(res.capacity_median)
+        self.assertIsNotNone(res.capacity_5th)
+        self.assertIsNotNone(res.capacity_95th)
+        self.assertEqual(len(res.capacity_median), 16)
+        self.assertEqual(len(res.capacity_5th), 16)
+        self.assertEqual(len(res.capacity_95th), 16)
+
+        # Invariant checks for each time step
+        has_variance = False
+        for h in range(16):
+            pt = res.stochastic_capacity[h]
+            p5 = pt.capacity_5th
+            p50 = pt.capacity_median
+            p95 = pt.capacity_95th
+
+            # 5th percentile <= Median (50th) <= 95th percentile
+            self.assertLessEqual(p5, p50 + 1e-4, f"Hour {h}: 5th percentile ({p5}) exceeds median ({p50})")
+            self.assertLessEqual(p50, p95 + 1e-4, f"Hour {h}: Median ({p50}) exceeds 95th percentile ({p95})")
+
+            # All capacity values must be within valid physical limits [0, baseline]
+            self.assertGreaterEqual(p5, 0.0)
+            self.assertLessEqual(p95, 48.0 + 1e-4)
+
+            # Check hourly_capacity points also contain the percentiles
+            self.assertEqual(res.hourly_capacity[h].capacity_5th, p5)
+            self.assertEqual(res.hourly_capacity[h].capacity_median, p50)
+            self.assertEqual(res.hourly_capacity[h].capacity_95th, p95)
+
+            # Check if there is non-zero variance around recovery hours
+            if p95 > p5:
+                has_variance = True
+
+        self.assertTrue(has_variance, "Monte Carlo replicates must exhibit variance across recovery timeline")
+
+        # Reproducibility check: same seed produces identical results
+        res_reproduced = run_cascade_simulation(req_stoch)
+        self.assertEqual(res.capacity_median, res_reproduced.capacity_median)
+        self.assertEqual(res.capacity_5th, res_reproduced.capacity_5th)
+        self.assertEqual(res.capacity_95th, res_reproduced.capacity_95th)
+
+    def request(self, **changes):
+        node = make_test_node("a", "A", stage=CascadeStage.STAGE_1_TRIGGER)
+        args = dict(
+            scenario_id="initial-conditions",
+            nodes=[node],
+            edges=[],
+            horizon_hours=8,
+            trigger_hour=4,
+            baseline_movements_per_hour=40,
+        )
+        args.update(changes)
+        return SimulationRequest(**args)
+
+    def test_explicit_empty_events_do_not_trigger_default_faults(self):
+        result = run_cascade_simulation(self.request(initiating_events=[]))
+        self.assertEqual(result.events, [])
+        self.assertEqual(result.summary_kpis["estimated_lost_movement_capacity"], 0)
+        self.assertTrue(all(p.tripartite_mitigated_capacity == 40 for p in result.hourly_capacity))
+
+    def test_omitted_events_do_not_trigger_default_faults(self):
+        self.assertEqual(run_cascade_simulation(self.request()).events, [])
+
+    def test_explicit_event_at_zero_still_runs(self):
+        result = run_cascade_simulation(
+            self.request(initiating_events=[InitiatingEvent(node_id="a", event_time_hours=0)])
+        )
+        self.assertEqual(result.events[0].timestamp_hours, 0)
+        self.assertGreater(result.summary_kpis["estimated_lost_movement_capacity"], 0)
+
+    def test_staffing_applies_from_start_without_faults(self):
+        result = run_cascade_simulation(self.request(staffed_operation_fraction=0.5))
+        self.assertEqual(result.events, [])
+        self.assertEqual(result.summary_kpis["estimated_lost_movement_capacity"], 160)
+        self.assertEqual(result.hourly_capacity[-1].estimated_lost_capacity_cumulative, 160)
+        self.assertTrue(all(p.tripartite_mitigated_capacity == 20 for p in result.hourly_capacity))
+        self.assertTrue(result.recovery_metrics.is_censored)
+        self.assertIsNone(result.recovery_metrics.recovery_time_hours)
+
+    def test_invalid_service_references_are_rejected(self):
+        for ids in ([], ["missing"]):
+            with self.subTest(ids=ids), self.assertRaises(ValueError):
+                run_cascade_simulation(
+                    self.request(services=[AirportService(service_id="svc", name="Test", required_node_ids=ids)])
+                )
+
+    def test_policy_comparison_identical_before_trigger_and_in_fault_free(self):
+        """Bug 3: Policy comparison curves (unmitigated, technical-only) must be identical pre-trigger and in fault-free runs."""
+        # 1. Fault-free run
+        res_ff = run_cascade_simulation(self.request(initiating_events=[]))
+        for p in res_ff.hourly_capacity:
+            self.assertEqual(p.tripartite_mitigated_capacity, 40.0)
+            self.assertEqual(p.unmitigated_capacity, 40.0)
+            self.assertEqual(p.technical_only_capacity, 40.0)
+
+        # 2. Incident starting at hour 4
+        res_inc = run_cascade_simulation(
+            self.request(initiating_events=[InitiatingEvent(node_id="a", event_time_hours=4.0)])
+        )
+        # Pre-incident hours (0, 1, 2, 3) must be identical across all curves
+        for h in range(4):
+            pt = res_inc.hourly_capacity[h]
+            self.assertEqual(pt.tripartite_mitigated_capacity, 40.0)
+            self.assertEqual(pt.unmitigated_capacity, 40.0)
+            self.assertEqual(pt.technical_only_capacity, 40.0)
+
+        # Post-incident hour 4 has capacity drop
+        self.assertLess(res_inc.hourly_capacity[4].tripartite_mitigated_capacity, 40.0)
 
 
 if __name__ == "__main__":

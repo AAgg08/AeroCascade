@@ -54,15 +54,26 @@ export function PythonBackendView() {
           </h2>
         </div>
 
-        <button
-          type="button"
-          onClick={() => executeSimulationOnServer()}
-          disabled={isSimulating}
-          className="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
-        >
-          <Play className="h-3.5 w-3.5" />
-          <span>{isSimulating ? 'Running POST /api/simulate...' : 'Execute POST /api/simulate'}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => executeSimulationOnServer()}
+            disabled={isSimulating}
+            className="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+          >
+            <Play className="h-3.5 w-3.5" />
+            <span>{isSimulating ? 'Running POST /api/simulate...' : 'Execute Deterministic Run'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => executeSimulationOnServer({ replicates: 30 })}
+            disabled={isSimulating}
+            className="inline-flex items-center gap-2 rounded-md border border-purple-500/70 bg-purple-950/70 px-4 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+          >
+            <Play className="h-3.5 w-3.5 text-purple-400" />
+            <span>{isSimulating ? 'Running (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}</span>
+          </button>
+        </div>
       </section>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">

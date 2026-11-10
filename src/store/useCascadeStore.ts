@@ -32,6 +32,7 @@ interface CascadeState {
   lastSyncedAt: string;
   inputRevision: number;
   latestRequestedRevision: number;
+  latestRequestId: number;
   pendingRequestsCount: number;
   backendError: string | null;
 
@@ -44,7 +45,7 @@ interface CascadeState {
   applyGlobalPreset: (mode: 'baseline' | 'technical-heavy' | 'tripartite-balanced' | 'unmitigated-stress') => void;
   setTriggerHour: (hour: number) => void;
   setBaselineMovements: (mvmt: number) => void;
-  executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean }) => Promise<void>;
+  executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean; replicates?: number }) => Promise<void>;
   clearBackendError: () => void;
 }
 
@@ -66,6 +67,8 @@ const initialSimulation = runDiscreteEventSimulation({
   },
 });
 
+let requestIdCounter = 0;
+
 export const useCascadeStore = create<CascadeState>((set, get) => ({
   activeTab: 'topology',
   scenarios: SCENARIO_PRESETS,
@@ -81,6 +84,7 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   lastSyncedAt: 'In-Browser Client (Initial Seed)',
   inputRevision: 1,
   latestRequestedRevision: 1,
+  latestRequestId: 0,
   pendingRequestsCount: 0,
   backendError: null,
 
@@ -281,7 +285,7 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   setTriggerHour: (hour) => {
     const state = get();
     const nextRev = state.inputRevision + 1;
-    const clamped = Math.min(12, Math.max(1, Math.round(hour)));
+    const clamped = Math.min(12, Math.max(0, Math.round(hour)));
     const simResult = runDiscreteEventSimulation({
       scenario_id: state.activeScenarioId,
       horizon_hours: state.horizonHours,
@@ -324,9 +328,10 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
     set({ baselineMovementsPerHour: clamped, simulationResult: simResult, inputRevision: nextRev });
   },
 
-  executeSimulationOnServer: async (opts?: { allowLegacyDemo?: boolean }) => {
+  executeSimulationOnServer: async (opts?: { allowLegacyDemo?: boolean; replicates?: number }) => {
     const state = get();
     const requestRevision = state.inputRevision;
+    const requestId = ++requestIdCounter;
 
     // Validate inputs
     if (!state.nodes || state.nodes.length === 0) {
@@ -340,9 +345,21 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
     set((s) => ({
       isSimulating: true,
       latestRequestedRevision: requestRevision,
+      latestRequestId: requestId,
       pendingRequestsCount: s.pendingRequestsCount + 1,
       backendError: null,
     }));
+
+    // Explicit initiating events for preset run: trigger Stage 1 nodes at triggerHour (including hour 0)
+    const stage1Nodes = state.nodes.filter((n) => n.stage === 'STAGE_1_TRIGGER');
+    const initiatingEvents = stage1Nodes.map((n) => ({
+      node_id: n.id,
+      event_time_hours: state.triggerHour,
+      failure_mode: n.failure_mode,
+    }));
+
+    let responseData: SimulationResponse | null = null;
+    let errorMessage: string | null = null;
 
     try {
       const url = opts?.allowLegacyDemo ? '/api/simulate?allow_legacy_demo=true' : '/api/simulate';
@@ -359,64 +376,59 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
           trigger_hour: state.triggerHour,
           nodes: state.nodes,
           edges: state.edges,
-          initiating_events: state.nodes
-            .filter((node) => node.stage === 'STAGE_1_TRIGGER')
-            .map((node) => ({
-              node_id: node.id,
-              event_time_hours: state.triggerHour,
-              failure_mode: node.failure_mode,
-            })),
           input_revision: requestRevision,
+          replicates: opts?.replicates ?? 1,
+          initiating_events: initiatingEvents,
         }),
       });
 
-      const pendingLeft = Math.max(0, get().pendingRequestsCount - 1);
-
       if (!response.ok) {
         const errJson = await response.json().catch(() => null);
-        const errMsg = errJson?.error || errJson?.detail || `Simulation server returned HTTP ${response.status}`;
-        const isLatest = get().latestRequestedRevision === requestRevision;
-        set({
-          pendingRequestsCount: pendingLeft,
-          // Only clear isSimulating if no newer requests are running
-          isSimulating: pendingLeft > 0 ? get().isSimulating : false,
-          backendError: isLatest ? errMsg : get().backendError,
-        });
-        return;
+        errorMessage = errJson?.error || errJson?.detail || `Simulation server returned HTTP ${response.status}`;
+      } else {
+        responseData = await response.json();
       }
-
-      const data: SimulationResponse = await response.json();
-
-      // Stale response protection:
-      // If user edited inputs while this request was in flight, or a newer request was dispatched,
-      // this older response must NEITHER overwrite the newer result NOR clear the loading state of the newer request!
-      const isStillLatest = get().latestRequestedRevision === requestRevision && get().inputRevision === requestRevision;
-
-      if (!isStillLatest) {
-        set({
-          pendingRequestsCount: pendingLeft,
-          // Do not clear isSimulating if newer requests are in flight!
-          isSimulating: pendingLeft > 0 ? get().isSimulating : false,
-        });
-        return;
-      }
-
-      const engineLabel = data.provenance?.engine_label ?? 'Authoritative Engine';
-      set({
-        simulationResult: data,
-        isSimulating: pendingLeft > 0 ? get().isSimulating : false,
-        pendingRequestsCount: pendingLeft,
-        backendError: null,
-        lastSyncedAt: `${engineLabel} (Rev #${requestRevision}) at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
-      });
     } catch (err) {
-      const pendingLeft = Math.max(0, get().pendingRequestsCount - 1);
-      const isLatest = get().latestRequestedRevision === requestRevision;
       const errMessage = err instanceof Error ? err.message : String(err);
+      errorMessage = `Failed to connect to simulation backend: ${errMessage}`;
+    }
+
+    // Decrement counter exactly once per dispatch using current state after body parsing settles:
+    const currentState = get();
+    const newPendingCount = Math.max(0, currentState.pendingRequestsCount - 1);
+    const stillSimulating = newPendingCount > 0;
+
+    // Stale response protection:
+    // Only the latest request for the current inputs can publish results or errors:
+    const isStillLatest = currentState.latestRequestId === requestId && currentState.inputRevision === requestRevision;
+
+    if (!isStillLatest) {
       set({
-        pendingRequestsCount: pendingLeft,
-        isSimulating: pendingLeft > 0 ? get().isSimulating : false,
-        backendError: isLatest ? `Failed to connect to simulation backend: ${errMessage}` : get().backendError,
+        pendingRequestsCount: newPendingCount,
+        isSimulating: stillSimulating,
+      });
+      return;
+    }
+
+    if (errorMessage) {
+      set({
+        pendingRequestsCount: newPendingCount,
+        isSimulating: stillSimulating,
+        backendError: errorMessage,
+      });
+      return;
+    }
+
+    if (responseData) {
+      const engineLabel = responseData.provenance?.engine_label ?? 'Authoritative Engine';
+      const repCount = responseData.replicates ?? (opts?.replicates ?? 1);
+      const repTag = repCount > 1 ? ` · Monte Carlo (${repCount} Reps)` : '';
+      set({
+        simulationResult: responseData,
+        isSimulating: stillSimulating,
+        pendingRequestsCount: newPendingCount,
+        backendError: null,
+        lastSyncedAt: `${engineLabel}${repTag} (Rev #${requestRevision}) at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
       });
     }
   },

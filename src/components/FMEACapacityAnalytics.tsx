@@ -28,7 +28,31 @@ export function FMEACapacityAnalytics() {
     updateNodeTripartite,
     applyGlobalPreset,
     triggerHour,
+    executeSimulationOnServer,
+    isSimulating,
   } = useCascadeStore();
+
+  const isStochastic = Boolean(
+    simulationResult.replicates &&
+      simulationResult.replicates > 1 &&
+      simulationResult.hourly_capacity.some(
+        (pt) => pt.capacity_5th !== undefined && pt.capacity_95th !== undefined
+      )
+  );
+
+  const capacityChartData = useMemo(() => {
+    return simulationResult.hourly_capacity.map((pt) => ({
+      ...pt,
+      confidence_band:
+        pt.capacity_5th !== undefined && pt.capacity_95th !== undefined
+          ? [pt.capacity_5th, pt.capacity_95th]
+          : undefined,
+      primary_capacity:
+        isStochastic && pt.capacity_median !== undefined
+          ? pt.capacity_median
+          : pt.tripartite_mitigated_capacity,
+    }));
+  }, [simulationResult.hourly_capacity, isStochastic]);
 
   const [stageFilter, setStageFilter] = useState<'ALL' | CascadeStage>('ALL');
   const [controlFilter, setControlFilter] = useState<'ALL' | ControlCategory>('ALL');
@@ -70,35 +94,58 @@ export function FMEACapacityAnalytics() {
           </h2>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-slate-800 bg-[#0B0F17] p-1">
-          <button
-            type="button"
-            onClick={() => applyGlobalPreset('baseline')}
-            className="rounded px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0"
-          >
-            Scenario Baseline
-          </button>
-          <button
-            type="button"
-            onClick={() => applyGlobalPreset('technical-heavy')}
-            className="rounded px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-          >
-            Technical-Only Bias
-          </button>
-          <button
-            type="button"
-            onClick={() => applyGlobalPreset('tripartite-balanced')}
-            className="rounded px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-          >
-            Tripartite Balanced
-          </button>
-          <button
-            type="button"
-            onClick={() => applyGlobalPreset('unmitigated-stress')}
-            className="rounded px-3 py-1.5 text-xs font-medium text-rose-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-          >
-            Unmitigated Stress
-          </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-slate-800 bg-[#0B0F17] p-1">
+            <button
+              type="button"
+              onClick={() => applyGlobalPreset('baseline')}
+              className="rounded px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap shrink-0"
+            >
+              Scenario Baseline
+            </button>
+            <button
+              type="button"
+              onClick={() => applyGlobalPreset('technical-heavy')}
+              className="rounded px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+            >
+              Technical-Only Bias
+            </button>
+            <button
+              type="button"
+              onClick={() => applyGlobalPreset('tripartite-balanced')}
+              className="rounded px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+            >
+              Tripartite Balanced
+            </button>
+            <button
+              type="button"
+              onClick={() => applyGlobalPreset('unmitigated-stress')}
+              className="rounded px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+            >
+              Unmitigated Stress
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="fmea-simulate-btn"
+              onClick={() => executeSimulationOnServer()}
+              disabled={isSimulating}
+              className="rounded-md bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
+            >
+              {isSimulating ? 'Simulating...' : 'Simulate'}
+            </button>
+            <button
+              type="button"
+              data-testid="fmea-monte-carlo-btn"
+              onClick={() => executeSimulationOnServer({ replicates: 30 })}
+              disabled={isSimulating}
+              className="rounded-md border border-purple-500/70 bg-purple-950/70 px-3 py-1.5 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
+            >
+              {isSimulating ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -197,22 +244,34 @@ export function FMEACapacityAnalytics() {
           className="rounded-md border border-slate-800 bg-[#111827] p-5"
         >
           <div className="border-b border-slate-800 pb-3 mb-4">
-            <div className="flex items-center justify-between text-xs font-mono text-slate-400">
-              <span>CHART 02 · SIMPY 24-HOUR THROUGHPUT TRAJECTORY</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-400">
+              <span className="flex items-center gap-2">
+                <span>CHART 02 · SIMPY 24-HOUR THROUGHPUT TRAJECTORY</span>
+                {isStochastic && (
+                  <span
+                    data-testid="chart-monte-carlo-badge"
+                    className="rounded bg-purple-950/80 px-2 py-0.5 text-[10px] font-semibold text-purple-300 border border-purple-800"
+                  >
+                    ⚡ MONTE CARLO (30 REPLICATES · 5th–95th %ile)
+                  </span>
+                )}
+              </span>
               <span>TRIGGER: T+0{triggerHour}:00Z</span>
             </div>
             <h3 className="mt-1 text-sm font-bold text-slate-100">
               Hourly Airport Movement Capacity Degradation &amp; Stage 3 Recovery Stall
             </h3>
             <p className="mt-0.5 text-xs text-slate-400">
-              Compares Unmitigated collapse, Technical-Only plateau (stalled by Stage 3 Formal/Informal deficits), and your active Tripartite configuration.
+              {isStochastic
+                ? 'Displays 5th–95th percentile confidence band and 50th percentile (median) recovery trajectory across 30 stochastic Monte Carlo replicates with Lognormal repair and Uniform propagation delays.'
+                : 'Compares Unmitigated collapse, Technical-Only plateau (stalled by Stage 3 Formal/Informal deficits), and your active Tripartite configuration.'}
             </p>
           </div>
 
           <div className="h-[340px] w-full" data-testid="chart-capacity-degradation">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
-                data={simulationResult.hourly_capacity}
+                data={capacityChartData}
                 margin={{ top: 12, right: 16, left: 0, bottom: 8 }}
               >
                 <CartesianGrid stroke="#1E293B" strokeDasharray="3 3" vertical={false} />
@@ -242,6 +301,15 @@ export function FMEACapacityAnalytics() {
                     fontFamily: 'JetBrains Mono, monospace',
                     color: '#F8FAFC',
                   }}
+                  formatter={(value: any, name: any) => {
+                    if (Array.isArray(value)) {
+                      return [`[${Number(value[0]).toFixed(1)}, ${Number(value[1]).toFixed(1)}] mvmt/hr`, name];
+                    }
+                    if (typeof value === 'number') {
+                      return [`${value.toFixed(1)} mvmt/hr`, name];
+                    }
+                    return [value, name];
+                  }}
                 />
                 <Legend
                   wrapperStyle={{
@@ -261,6 +329,34 @@ export function FMEACapacityAnalytics() {
                     fontSize: 10,
                   }}
                 />
+
+                {/* Layer 1: 5th-95th Percentile Shaded Confidence Band (Layered behind main lines) */}
+                {isStochastic && (
+                  <Area
+                    type="monotone"
+                    dataKey="confidence_band"
+                    name="5th–95th %ile Confidence Band"
+                    fill="#A855F7"
+                    fillOpacity={0.25}
+                    stroke="#C084FC"
+                    strokeWidth={1}
+                    strokeDasharray="2 2"
+                  />
+                )}
+
+                {/* Layer 1b: Deterministic Fill (only when not in stochastic mode) */}
+                {!isStochastic && (
+                  <Area
+                    type="monotone"
+                    dataKey="tripartite_mitigated_capacity"
+                    name="Active Tripartite Mitigation"
+                    fill="#10B981"
+                    fillOpacity={0.16}
+                    stroke="none"
+                  />
+                )}
+
+                {/* Layer 2: Baseline Nominal Capacity */}
                 <Line
                   type="stepAfter"
                   dataKey="baseline_capacity"
@@ -270,15 +366,31 @@ export function FMEACapacityAnalytics() {
                   strokeWidth={1.5}
                   dot={false}
                 />
-                <Area
+
+                {/* Layer 3: Primary Solid Line: Median Capacity (50th %ile) or Active Tripartite Capacity */}
+                <Line
                   type="monotone"
-                  dataKey="tripartite_mitigated_capacity"
-                  name="Active Tripartite Configuration"
-                  fill="#10B981"
-                  fillOpacity={0.16}
+                  dataKey="primary_capacity"
+                  name={isStochastic ? 'Median Capacity (50th %ile)' : 'Active Tripartite Configuration'}
                   stroke="#10B981"
                   strokeWidth={2.5}
+                  dot={isStochastic ? { r: 2.5, fill: '#10B981' } : false}
                 />
+
+                {/* Layer 4: Deterministic benchmark line when stochastic is active */}
+                {isStochastic && (
+                  <Line
+                    type="monotone"
+                    dataKey="tripartite_mitigated_capacity"
+                    name="Deterministic Baseline (1 Rep)"
+                    stroke="#34D399"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 2"
+                    dot={false}
+                  />
+                )}
+
+                {/* Layer 5: Technical-Only Capacity */}
                 <Line
                   type="monotone"
                   dataKey="technical_only_capacity"
@@ -288,6 +400,8 @@ export function FMEACapacityAnalytics() {
                   strokeDasharray="4 2"
                   dot={false}
                 />
+
+                {/* Layer 6: Unmitigated Cascade */}
                 <Line
                   type="monotone"
                   dataKey="unmitigated_capacity"
