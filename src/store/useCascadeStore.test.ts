@@ -253,4 +253,18 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
       'Error message must indicate empty node list'
     );
   });
+
+  await t.test('Preset runs send explicit initiating events to the causal engine', async () => {
+    let sent: any;
+    globalThis.fetch = async (_url, options) => {
+      sent = JSON.parse(String(options?.body));
+      return new Response(JSON.stringify(makeMockResponse('explicit-events', 1)), { status: 200 });
+    };
+    await useCascadeStore.getState().executeSimulationOnServer();
+    const triggers = useCascadeStore.getState().nodes.filter(n => n.stage === 'STAGE_1_TRIGGER');
+    assert.equal(sent.initiating_events.length, triggers.length);
+    assert.ok(sent.initiating_events.length > 0);
+    assert.deepEqual(sent.initiating_events.map((e: any) => e.node_id), triggers.map(n => n.id));
+    assert.ok(sent.initiating_events.every((e: any) => e.event_time_hours === sent.trigger_hour));
+  });
 });

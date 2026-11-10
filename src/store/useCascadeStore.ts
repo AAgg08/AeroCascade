@@ -359,6 +359,13 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
           trigger_hour: state.triggerHour,
           nodes: state.nodes,
           edges: state.edges,
+          initiating_events: state.nodes
+            .filter((node) => node.stage === 'STAGE_1_TRIGGER')
+            .map((node) => ({
+              node_id: node.id,
+              event_time_hours: state.triggerHour,
+              failure_mode: node.failure_mode,
+            })),
           input_revision: requestRevision,
         }),
       });

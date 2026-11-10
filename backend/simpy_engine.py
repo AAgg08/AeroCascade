@@ -98,6 +98,13 @@ def validate_simulation_request(req: SimulationRequest) -> None:
                 f"Initiating event time ({init_ev.event_time_hours}h) must be within [0, {req.horizon_hours}h)"
             )
 
+    for service in req.services:
+        if not service.required_node_ids:
+            raise ValueError(f"Service '{service.service_id}' must identify required nodes.")
+        missing = set(service.required_node_ids) - seen_node_ids
+        if missing:
+            raise ValueError(f"Service '{service.service_id}' references unknown nodes: {sorted(missing)}")
+
     # Check non-finite values
     numeric_checks = [
         req.horizon_hours,
@@ -166,7 +173,7 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
 
     # Piecewise continuous capacity state-transition history: List of (t_start, capacity)
     nominal_cap = float(req.baseline_movements_per_hour)
-    timeline_changes: List[Tuple[float, float]] = [(0.0, nominal_cap)]
+    timeline_changes: List[Tuple[float, float]] = []
 
     # Services definition
     services = req.services
@@ -414,20 +421,11 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
 
         env.process(repair_node_process(env, node_id, evt_id))
 
-    # Determine initiating events
+    # Initial capacity must include workforce constraints even without any faults.
+    record_capacity_transition(0.0)
+
+    # Empty means no faults. Preset selection belongs to the caller, not the engine.
     initiating_events = req.initiating_events
-    if not initiating_events and req.trigger_hour > 0:
-        # Default behavior for scenario presets: trigger Stage 1 nodes at trigger_hour
-        stage1_nodes = [n for n in req.nodes if n.stage == CascadeStage.STAGE_1_TRIGGER]
-        if stage1_nodes:
-            initiating_events = [
-                InitiatingEvent(
-                    node_id=s1.id,
-                    event_time_hours=float(req.trigger_hour),
-                    failure_mode=s1.failure_mode,
-                )
-                for s1 in stage1_nodes
-            ]
 
     # Schedule initiating events in SimPy
     for init_ev in initiating_events:
