@@ -171,6 +171,21 @@ export interface HourlyCapacityPoint {
   estimated_lost_capacity_cumulative: number;
   /** Backward-compatible alias for estimated_lost_capacity_cumulative */
   delayed_flights_cumulative: number;
+  /** Monte Carlo 50th percentile (median) capacity when replicates > 1 */
+  capacity_median?: number;
+  /** Monte Carlo 5th percentile lower confidence bound when replicates > 1 */
+  capacity_5th?: number;
+  /** Monte Carlo 95th percentile upper confidence bound when replicates > 1 */
+  capacity_95th?: number;
+}
+
+export interface HourlyCapacityPercentiles {
+  hour: number;
+  time_label: string;
+  baseline_capacity: number;
+  capacity_median: number;
+  capacity_5th: number;
+  capacity_95th: number;
 }
 
 export interface ResultProvenance {
@@ -178,6 +193,7 @@ export interface ResultProvenance {
   engine_label: string;
   model_version: string;
   input_revision: number;
+  replicates?: number;
   generated_at: string;
   is_fallback: boolean;
   fallback_reason?: string;
@@ -271,12 +287,36 @@ export interface SimulationResponse {
   input_hash?: string;
   parameter_set_version?: string;
   random_seed?: number;
+  replicates?: number;
   summary_kpis: SimulationSummaryKPIs;
   events: DiscreteEventRecord[];
   hourly_capacity: HourlyCapacityPoint[];
+  stochastic_capacity?: HourlyCapacityPercentiles[];
+  capacity_median?: number[];
+  capacity_5th?: number[];
+  capacity_95th?: number[];
   node_analytics: NodeCentralityMetric[];
   easa_notification: EASAPartISNotification;
   recovery_metrics?: RecoveryMetrics;
   provenance: ResultProvenance;
   input_snapshot?: Record<string, unknown>;
+}
+
+export interface SimulationRequestPayload {
+  scenario_id: string;
+  horizon_hours?: number;
+  baseline_movements_per_hour?: number;
+  trigger_hour?: number;
+  random_seed?: number;
+  replicates?: number;
+  nodes: SystemNodeModel[];
+  edges: DependencyEdgeModel[];
+  initiating_events?: InitiatingEvent[];
+  services?: AirportService[];
+  redundancy_groups?: RedundancyGroupConfig[];
+  num_technicians?: number;
+  recovery_threshold_pct?: number;
+  recovery_sustained_hours?: number;
+  staffed_operation_fraction?: number;
+  input_revision?: number;
 }

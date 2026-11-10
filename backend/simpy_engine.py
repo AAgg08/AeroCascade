@@ -27,6 +27,7 @@ from .models import (
     DiscreteEventRecord,
     EASAPartISNotification,
     HourlyCapacityPoint,
+    HourlyCapacityPercentiles,
     InitiatingEvent,
     NodeState,
     RecoveryMetrics,
@@ -98,12 +99,14 @@ def validate_simulation_request(req: SimulationRequest) -> None:
                 f"Initiating event time ({init_ev.event_time_hours}h) must be within [0, {req.horizon_hours}h)"
             )
 
-    for service in req.services:
-        if not service.required_node_ids:
-            raise ValueError(f"Service '{service.service_id}' must identify required nodes.")
-        missing = set(service.required_node_ids) - seen_node_ids
-        if missing:
-            raise ValueError(f"Service '{service.service_id}' references unknown nodes: {sorted(missing)}")
+    for svc in req.services:
+        if not svc.required_node_ids:
+            raise ValueError(f"Service '{svc.service_id}' must specify at least one required_node_id.")
+        for nid in svc.required_node_ids:
+            if nid not in seen_node_ids:
+                raise ValueError(
+                    f"Service '{svc.service_id}' references non-existent node '{nid}'"
+                )
 
     # Check non-finite values
     numeric_checks = [
@@ -125,6 +128,28 @@ def compute_input_hash(req: SimulationRequest) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _clone_request_with_policy(
+    req: SimulationRequest,
+    policy_mode: str,
+) -> SimulationRequest:
+    """Clones a SimulationRequest with documented policy inputs holding scenario and staffing constant."""
+    cloned_nodes: List[SystemNodeModel] = []
+    for n in req.nodes:
+        node_dict = n.model_dump()
+        if policy_mode == "technical-heavy":
+            node_dict["tripartite"] = {"technical": 88.0, "formal": 22.0, "informal": 8.0}
+            node_dict["fmea"]["policy_investment"] = 88.0 if n.stage == CascadeStage.STAGE_1_TRIGGER else 24.0
+        elif policy_mode == "unmitigated-stress":
+            node_dict["tripartite"] = {"technical": 25.0, "formal": 20.0, "informal": 18.0}
+            node_dict["fmea"]["policy_investment"] = 15.0
+        cloned_nodes.append(SystemNodeModel(**node_dict))
+
+    req_dict = req.model_dump()
+    req_dict["nodes"] = cloned_nodes
+    req_dict["replicates"] = 1  # Policy comparison curves are deterministic
+    return SimulationRequest(**req_dict)
+
+
 def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
     """
     Executes an authoritative discrete-event causal simulation in SimPy.
@@ -134,8 +159,136 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
     - Concurrent resource-constrained technician repair
     - Formal supervisory/workforce recovery constraints
     - Capacity derived directly from the service state-transition history
+
+    When req.replicates == 1: deterministic baseline (original behavior).
+    When req.replicates > 1: Monte Carlo with stochastic durations; returns percentile bands.
     """
     validate_simulation_request(req)
+
+    # Always run the deterministic baseline (replicate 0 uses original durations)
+    baseline_response = _run_single_simulation(req, duration_overrides=None)
+
+    # Counterfactual policy runs for unmitigated and technical-only lines
+    # Holding scenario, topology, staffing, and initiating conditions constant
+    unmit_req = _clone_request_with_policy(req, "unmitigated-stress")
+    tech_req = _clone_request_with_policy(req, "technical-heavy")
+    unmit_res = _run_single_simulation(unmit_req, duration_overrides=None)
+    tech_res = _run_single_simulation(tech_req, duration_overrides=None)
+
+    for h in range(len(baseline_response.hourly_capacity)):
+        baseline_response.hourly_capacity[h].unmitigated_capacity = (
+            unmit_res.hourly_capacity[h].tripartite_mitigated_capacity
+        )
+        baseline_response.hourly_capacity[h].technical_only_capacity = (
+            tech_res.hourly_capacity[h].tripartite_mitigated_capacity
+        )
+
+    if req.replicates <= 1:
+        # Pure deterministic mode — return baseline augmented with counterfactual lines
+        return baseline_response
+
+    # --- Monte Carlo mode ---
+    rng = np.random.default_rng(req.random_seed)
+
+    # Collect per-hour mitigated capacity across all replicates
+    n_hours = req.horizon_hours
+    all_hourly_caps: List[List[float]] = []  # shape: [replicates][hours]
+
+    for rep_idx in range(req.replicates):
+        # Sample stochastic duration overrides for this replicate
+        # Each replicate gets a deterministic sub-seed derived from (random_seed + rep_idx)
+        rep_rng = np.random.default_rng(req.random_seed + rep_idx)
+
+        duration_overrides: Dict[str, Dict[str, float]] = {}
+
+        # Sample node repair durations from LogNormal distribution
+        # LogNormal(mu, sigma): mean of underlying normal = ln(nominal), sigma = 0.3
+        # This gives a right-skewed distribution centered near the nominal value
+        for node in req.nodes:
+            nominal_repair = float(node.repair_duration_hours)
+            if nominal_repair > 0:
+                log_mu = np.log(max(0.01, nominal_repair))
+                log_sigma = 0.3  # Moderate variance
+                sampled_repair = float(rep_rng.lognormal(mean=log_mu, sigma=log_sigma))
+            else:
+                sampled_repair = 0.0
+            duration_overrides[node.id] = {"repair_duration_hours": sampled_repair}
+
+        # Sample edge propagation delays from Uniform distribution
+        # Uniform[0.5 * nominal, 1.5 * nominal] — bounded perturbation around nominal
+        for edge in req.edges:
+            nominal_delay = float(edge.propagation_delay_hours)
+            if nominal_delay > 0:
+                lo = nominal_delay * 0.5
+                hi = nominal_delay * 1.5
+                sampled_delay = float(rep_rng.uniform(lo, hi))
+            else:
+                sampled_delay = 0.0
+            if edge.source not in duration_overrides:
+                duration_overrides[edge.source] = {}
+            duration_overrides.setdefault(f"edge:{edge.id}", {})["propagation_delay_hours"] = sampled_delay
+
+        rep_response = _run_single_simulation(req, duration_overrides=duration_overrides)
+        rep_caps = [pt.tripartite_mitigated_capacity for pt in rep_response.hourly_capacity]
+        all_hourly_caps.append(rep_caps)
+
+    # Aggregate percentiles across replicates at each hour
+    caps_array = np.array(all_hourly_caps)  # shape: [replicates, hours]
+    nominal_cap = float(req.baseline_movements_per_hour)
+
+    stochastic_capacity: List[HourlyCapacityPercentiles] = []
+    med_list: List[float] = []
+    p5_list: List[float] = []
+    p95_list: List[float] = []
+
+    for h in range(n_hours):
+        col = caps_array[:, h]
+        p5, p50, p95 = float(np.percentile(col, 5)), float(np.percentile(col, 50)), float(np.percentile(col, 95))
+        p5_val = round(p5, 2)
+        p50_val = round(p50, 2)
+        p95_val = round(p95, 2)
+
+        stoch_pt = HourlyCapacityPercentiles(
+            hour=h,
+            time_label=f"T+{h:02d}:00",
+            baseline_capacity=nominal_cap,
+            capacity_median=p50_val,
+            capacity_5th=p5_val,
+            capacity_95th=p95_val,
+        )
+        stochastic_capacity.append(stoch_pt)
+        med_list.append(p50_val)
+        p5_list.append(p5_val)
+        p95_list.append(p95_val)
+
+        if h < len(baseline_response.hourly_capacity):
+            baseline_response.hourly_capacity[h].capacity_median = p50_val
+            baseline_response.hourly_capacity[h].capacity_5th = p5_val
+            baseline_response.hourly_capacity[h].capacity_95th = p95_val
+
+    # Return the deterministic baseline response augmented with stochastic bands
+    baseline_response.replicates = req.replicates
+    baseline_response.stochastic_capacity = stochastic_capacity
+    baseline_response.capacity_median = med_list
+    baseline_response.capacity_5th = p5_list
+    baseline_response.capacity_95th = p95_list
+    if baseline_response.provenance:
+        baseline_response.provenance.replicates = req.replicates
+    return baseline_response
+
+
+def _run_single_simulation(
+    req: SimulationRequest,
+    duration_overrides: Optional[Dict[str, Dict[str, float]]] = None,
+) -> SimulationResponse:
+    """
+    Core single-run simulation. When duration_overrides is None, uses nominal
+    (deterministic) durations from the request. When provided, uses sampled values.
+
+    duration_overrides format:
+      { node_id: {"repair_duration_hours": float},
+        "edge:<edge_id>": {"propagation_delay_hours": float} }
+    """
 
     # Build NetworkX graph and canonical centrality metrics
     G, node_analytics = build_dependency_graph(req.nodes, req.edges)
@@ -266,6 +419,9 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
         else:
             timeline_changes.append((now, new_cap))
 
+    # Initialize capacity timeline at t=0.0 from actual operating conditions (e.g. initial staffing)
+    record_capacity_transition(0.0)
+
     def trigger_node_failure(
         node_id: str,
         now: float,
@@ -320,8 +476,12 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
             if not child_node:
                 continue
 
-            # Propagation delay
-            prop_delay = float(edge.propagation_delay_hours)
+            # Propagation delay — use override if provided (stochastic mode)
+            edge_key = f"edge:{edge.id}"
+            if duration_overrides and edge_key in duration_overrides:
+                prop_delay = float(duration_overrides[edge_key].get("propagation_delay_hours", edge.propagation_delay_hours))
+            else:
+                prop_delay = float(edge.propagation_delay_hours)
             if prop_delay < 0:
                 prop_delay = 0.0
 
@@ -353,9 +513,18 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
                 node_states[n_id] = NodeState.REPAIRING
                 record_capacity_transition(env.now)
 
-                # Execute technical repair
-                repair_time = float(n.repair_duration_hours)
-                yield env.timeout(repair_time)
+                # Execute technical repair — use override if provided (stochastic mode)
+                if duration_overrides and n_id in duration_overrides:
+                    repair_time = float(duration_overrides[n_id].get("repair_duration_hours", n.repair_duration_hours))
+                else:
+                    repair_time = float(n.repair_duration_hours)
+
+                # Modulate technical repair duration by technical control maturity
+                tech_score = float(n.tripartite.technical)
+                tech_factor = max(0.5, 1.5 - (tech_score / 100.0))
+                effective_repair_time = repair_time * tech_factor
+                effective_repair_time = max(0.001, effective_repair_time) if repair_time > 0 else 0.0
+                yield env.timeout(effective_repair_time)
 
                 if env.now >= req.horizon_hours:
                     return
@@ -366,6 +535,11 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
             if n.requires_authorization and n.authorization_delay_hours > 0:
                 node_states[n_id] = NodeState.AWAITING_AUTHORIZATION
                 record_capacity_transition(env.now)
+
+                # Formal/informal governance controls resolve authorization delay
+                avg_gov = 0.5 * (float(n.tripartite.formal) + float(n.tripartite.informal))
+                gov_factor = max(0.4, 1.5 - (avg_gov / 100.0))
+                effective_auth_delay = float(n.authorization_delay_hours) * gov_factor
 
                 event_id_counter += 1
                 events.append(
@@ -379,7 +553,7 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
                         node_label=n.label,
                         dominant_control=ControlCategory.FORMAL,
                         event_type="RECOVERY_GOVERNANCE_STALL",
-                        narrative=f"Technical repair complete at {n.label}; awaiting operational supervisor authorization ({n.authorization_delay_hours:.1f}h).",
+                        narrative=f"Technical repair complete at {n.label}; awaiting operational supervisor authorization ({effective_auth_delay:.1f}h).",
                         capacity_impact_pct=0.0,
                         residual_rpn=compute_residual_rpn(n),
                         parent_event_id=fail_evt_id,
@@ -389,7 +563,7 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
                     )
                 )
 
-                yield env.timeout(float(n.authorization_delay_hours))
+                yield env.timeout(effective_auth_delay)
 
                 if env.now >= req.horizon_hours:
                     return
@@ -421,10 +595,7 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
 
         env.process(repair_node_process(env, node_id, evt_id))
 
-    # Initial capacity must include workforce constraints even without any faults.
-    record_capacity_transition(0.0)
-
-    # Empty means no faults. Preset selection belongs to the caller, not the engine.
+    # Determine initiating events: empty or omitted initiating_events indicates a fault-free run
     initiating_events = req.initiating_events
 
     # Schedule initiating events in SimPy
@@ -506,8 +677,8 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
                 hour=h,
                 time_label=f"T+{h:02d}:00",
                 baseline_capacity=nominal_cap,
-                unmitigated_capacity=round(max(0.0, active_cap * 0.75), 1),
-                technical_only_capacity=round(max(0.0, active_cap * 0.88), 1),
+                unmitigated_capacity=round(active_cap, 1),
+                technical_only_capacity=round(active_cap, 1),
                 tripartite_mitigated_capacity=round(active_cap, 1),
                 active_stage=stage_str,
                 estimated_lost_capacity_cumulative=int(round(running_cumulative_lost)),
@@ -628,6 +799,7 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
         model_version="2.0.0-causal",
         schema_version="2.0.0",
         input_revision=req.input_revision,
+        replicates=req.replicates,
         generated_at=datetime.now(timezone.utc).isoformat(),
         is_fallback=False,
     )
@@ -640,6 +812,7 @@ def run_cascade_simulation(req: SimulationRequest) -> SimulationResponse:
         input_hash=input_hash,
         parameter_set_version="2026.1",
         random_seed=req.random_seed,
+        replicates=req.replicates,
         summary_kpis={
             "mean_raw_rpn": round(mean_raw, 1),
             "mean_residual_rpn": round(mean_adj, 1),

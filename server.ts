@@ -24,7 +24,7 @@ async function startServer() {
     try {
       const targetUrl = `${PYTHON_BACKEND_URL}${req.originalUrl}`;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3500);
+      const timeout = setTimeout(() => controller.abort(), 20000);
 
       const headers: Record<string, string> = {
         Accept: 'application/json',

@@ -37,6 +37,8 @@ export function TopologyWorkspace() {
     triggerHour,
     setBaselineMovements,
     setTriggerHour,
+    executeSimulationOnServer,
+    isSimulating,
   } = useCascadeStore();
 
   const activeScenario = useMemo(
@@ -507,6 +509,28 @@ export function TopologyWorkspace() {
                     {selectedNode.mitigation_recommendation}
                   </p>
                 </div>
+              </div>
+
+              {/* Simulation Dispatch Trigger */}
+              <div className="border-t border-slate-800/80 pt-3 flex flex-col gap-2">
+                <button
+                  type="button"
+                  data-testid="inspector-simulate-btn"
+                  onClick={() => executeSimulationOnServer()}
+                  disabled={isSimulating}
+                  className="w-full rounded bg-cyan-500 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors"
+                >
+                  {isSimulating ? 'Simulating...' : 'Simulate'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="inspector-monte-carlo-btn"
+                  onClick={() => executeSimulationOnServer({ replicates: 30 })}
+                  disabled={isSimulating}
+                  className="w-full rounded border border-purple-500/70 bg-purple-950/70 py-1.5 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors"
+                >
+                  {isSimulating ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}
+                </button>
               </div>
             </div>
           ) : null}

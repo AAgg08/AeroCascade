@@ -65,15 +65,26 @@ export default function App() {
           })}
         </nav>
 
-        {/* Zone 3: 1 primary action */}
-        <div className="order-2 sm:order-3 flex items-center shrink-0">
+        {/* Zone 3: Primary Actions */}
+        <div className="order-2 sm:order-3 flex items-center gap-2 shrink-0">
           <button
             type="button"
+            data-testid="run-simulation-btn"
             onClick={() => executeSimulationOnServer()}
             disabled={isSimulating}
             className="rounded-md bg-cyan-500 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
           >
             {isSimulating ? 'Simulating...' : 'Run Simulation'}
+          </button>
+          <button
+            type="button"
+            data-testid="run-monte-carlo-btn"
+            onClick={() => executeSimulationOnServer({ replicates: 30 })}
+            disabled={isSimulating}
+            className="rounded-md border border-purple-500/70 bg-purple-950/70 px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900 hover:border-purple-400 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
+            title="Run 30 stochastic Monte Carlo replicates with Lognormal repair and Uniform propagation delays"
+          >
+            {isSimulating ? 'Simulating (30 Reps)...' : 'Run Monte Carlo (30 Replicates)'}
           </button>
         </div>
       </header>
@@ -119,6 +130,14 @@ export default function App() {
               <span className="text-slate-400">
                 REV #{simulationResult.provenance?.input_revision ?? 1}
               </span>
+              {simulationResult.replicates && simulationResult.replicates > 1 && (
+                <span
+                  data-testid="provenance-replicates-badge"
+                  className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-950/80 text-purple-300 border border-purple-800"
+                >
+                  ⚡ MONTE CARLO ({simulationResult.replicates} REPS)
+                </span>
+              )}
               {simulationResult.provenance?.is_fallback && (
                 <span className="text-amber-400 text-[11px]" title={simulationResult.provenance.fallback_reason}>
                   (FALLBACK ACTIVE)
