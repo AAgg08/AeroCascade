@@ -625,7 +625,7 @@ export function TopologyWorkspace() {
             <div className="text-xs font-semibold text-gray-600">
               Recovery Window: <span className="text-amber-600 font-bold">{simulationResult.summary_kpis.recovery_window_hours} hrs</span>
               <span aria-hidden="true" className="mx-2 text-gray-300">·</span>
-              Lost Flights: <span className="text-rose-600 font-bold">{simulationResult.summary_kpis.total_disrupted_movements} mvmt</span>
+              Modeled Lost Capacity: <span className="text-rose-600 font-bold">{simulationResult.summary_kpis.total_disrupted_movements} mvmt</span>
             </div>
             <button
               type="button"

@@ -545,10 +545,10 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     const store = useCascadeStore.getState();
     assert.equal(store.costPerDelayedMovement, 7500, 'costPerDelayedMovement must default to 7500');
 
-    // Baseline calculation check: 145 flights * 7500 = $1,087,500 ≈ $1.1M
-    const lostFlights = 145;
-    const initialDisruptionMillions = ((lostFlights * store.costPerDelayedMovement) / 1_000_000).toFixed(1);
-    assert.equal(initialDisruptionMillions, '1.1', '145 lost flights at $7,500 must equal $1.1M est. disruption');
+    // Baseline calculation check: 145 movements * 7500 = $1,087,500 ≈ $1.1M
+    const lostMovements = 145;
+    const initialDisruptionMillions = ((lostMovements * store.costPerDelayedMovement) / 1_000_000).toFixed(1);
+    assert.equal(initialDisruptionMillions, '1.1', '145 lost movements at $7,500 must equal $1.1M est. disruption');
 
     // Update cost multiplier to 12,000
     const prevRev = store.inputRevision;
@@ -561,8 +561,8 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
       'Cost multiplier change is analytical telemetry and must not invalidate simulation input revision'
     );
 
-    const updatedDisruptionMillions = ((lostFlights * updatedStore.costPerDelayedMovement) / 1_000_000).toFixed(1);
-    assert.equal(updatedDisruptionMillions, '1.7', '145 lost flights at $12,000 must recalculate to $1.7M est. disruption');
+    const updatedDisruptionMillions = ((lostMovements * updatedStore.costPerDelayedMovement) / 1_000_000).toFixed(1);
+    assert.equal(updatedDisruptionMillions, '1.7', '145 lost movements at $12,000 must recalculate to $1.7M est. disruption');
 
     // Negative values must be clamped to 0
     useCascadeStore.getState().setCostPerDelayedMovement(-500);

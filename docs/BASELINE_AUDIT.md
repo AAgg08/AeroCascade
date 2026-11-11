@@ -174,10 +174,9 @@ AeroCascade 2.0 establishes the Python FastAPI + SimPy + NetworkX engine as the 
 - **Reproduction:** Run `git status` inside `/Users/aryanaggarwal/Downloads/aerocascade`.
 - **Note:** Initializing Git within `/Users/aryanaggarwal/Downloads` must be done specifically inside `aerocascade/` once confirmed by the user.
 
-### Gap 3: Code-Splitting Warning in Vite Build
-- **Description:** `dist/assets/index-*.js` exceeds 500 kB (959 kB minified) due to monolithic bundling of `@xyflow/react` and `recharts`.
-- **Reproduction:** Run `npm run build`.
-- **Recommended Remediation:** Configure `build.rollupOptions.output.manualChunks` in `vite.config.ts` to separate vendor chunks.
+### Gap 3: Code-Splitting Warning in Vite Build [RESOLVED]
+- **Resolution:** Each workspace loads its own JavaScript on demand. React Flow loads with Topology, and Recharts loads with FMEA & Capacity. Opening a direct workspace URL loads that workspace first.
+- **Verification:** The production build emits separate workspace chunks and no longer warns about chunks over 500 kB.
 
 ### Gap 4: Silent Fallback on Failed API Requests [RESOLVED in Prompt 2]
 - **Status:** Resolved. `server.ts` returns an explicit HTTP 503 if the Python backend is offline, and `useCascadeStore.ts` captures `backendError`, rendering an interactive error banner in `App.tsx` with retry and explicitly labeled uncalibrated legacy demo mode options. Older in-flight requests cannot overwrite newer results or clear active loading states.

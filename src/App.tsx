@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -13,11 +13,14 @@ import {
   Terminal,
   X,
 } from 'lucide-react';
-import { EASAComplianceView } from './components/EASAComplianceView.tsx';
-import { FMEACapacityAnalytics } from './components/FMEACapacityAnalytics.tsx';
-import { PythonBackendView } from './components/PythonBackendView.tsx';
-import { TopologyWorkspace } from './components/TopologyWorkspace.tsx';
-import { useCascadeStore, type WorkspaceTab } from './store/useCascadeStore.ts';
+import { useCascadeStore, workspaceTabFromHash, type WorkspaceTab } from './store/useCascadeStore.ts';
+
+const WORKSPACE_VIEWS = {
+  topology: lazy(() => import('./components/TopologyWorkspace.tsx').then((module) => ({ default: module.TopologyWorkspace }))),
+  'fmea-capacity': lazy(() => import('./components/FMEACapacityAnalytics.tsx').then((module) => ({ default: module.FMEACapacityAnalytics }))),
+  'easa-compliance': lazy(() => import('./components/EASAComplianceView.tsx').then((module) => ({ default: module.EASAComplianceView }))),
+  'python-engine': lazy(() => import('./components/PythonBackendView.tsx').then((module) => ({ default: module.PythonBackendView }))),
+};
 
 const NAV_ITEMS: { id: WorkspaceTab; label: string; icon: typeof Network }[] = [
   { id: 'topology', label: 'Topology & DES', icon: Network },
@@ -50,13 +53,12 @@ export default function App() {
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
   const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
   const [showVcTour, setShowVcTour] = useState(false);
+  const ActiveWorkspace = WORKSPACE_VIEWS[activeTab];
 
   useEffect(() => {
     const handleHash = () => {
-      const hash = window.location.hash.replace('#', '') as WorkspaceTab;
-      if (['topology', 'fmea-capacity', 'easa-compliance', 'python-engine'].includes(hash)) {
-        setActiveTab(hash);
-      }
+      const tab = workspaceTabFromHash(window.location.hash);
+      if (tab) setActiveTab(tab);
     };
     handleHash();
     window.addEventListener('hashchange', handleHash);
@@ -333,13 +335,13 @@ export default function App() {
                         <span
                           data-testid="kpi-disruption-cost-badge"
                           className="font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 text-[11px]"
-                          title={`Direct airline delay & passenger disruption cost (${costPerDelayedMovement.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/movement benchmark)`}
+                          title={`Illustrative disruption cost calculated from modeled capacity loss ($${costPerDelayedMovement.toLocaleString()}/movement assumption)`}
                         >
                           ≈ ${((lostCapacity * costPerDelayedMovement) / 1_000_000).toFixed(1)}M est. disruption
                         </span>
                         <label
                           className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full border border-gray-200 shadow-2xs"
-                          title="Adjust cost per delayed movement to recalculate financial disruption"
+                          title="Adjust illustrative cost assumption per movement to recalculate modeled disruption"
                         >
                           <span className="text-gray-400">$</span>
                           <input
@@ -431,12 +433,9 @@ export default function App() {
           </section>
 
           {/* Active Workspace View */}
-          <div className="transition-opacity duration-200">
-            {activeTab === 'topology' && <TopologyWorkspace />}
-            {activeTab === 'fmea-capacity' && <FMEACapacityAnalytics />}
-            {activeTab === 'easa-compliance' && <EASAComplianceView />}
-            {activeTab === 'python-engine' && <PythonBackendView />}
-          </div>
+          <Suspense fallback={<p role="status" className="px-4 py-8 text-sm text-gray-600">Loading workspace…</p>}>
+            <ActiveWorkspace />
+          </Suspense>
         </main>
 
         {/* Clean Light Footer */}
@@ -485,27 +484,27 @@ export default function App() {
               </button>
             </div>
 
-            {/* Core Value Proposition Grid */}
+            {/* Core Analytical Framework Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">The Market Need</span>
-                <div className="text-xs font-bold text-gray-900">$4.8B Aviation Shift</div>
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Operational Context</span>
+                <div className="text-xs font-bold text-gray-900">RTC Digital Consolidation</div>
                 <p className="text-[11px] text-gray-500 leading-snug">
-                  ANSPs are centralizing air traffic towers into multi-aerodrome digital centres, introducing massive cyber-physical fragility.
+                  ANSPs centralize air traffic control into multi-aerodrome digital centres, introducing cyber-physical dependencies across camera feeds and strip bays.
                 </p>
               </div>
               <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
-                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">The Tech Moat</span>
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Analytical Model</span>
                 <div className="text-xs font-bold text-gray-900">Causal SimPy Engine</div>
                 <p className="text-[11px] text-gray-500 leading-snug">
-                  Traditional IT firewalls miss physical dependency cascades. AeroCascade simulates 3-stage failure and 30-rep Monte Carlo spreads.
+                  Simulates 3-stage failure propagation (Cyber Trigger → Physical Propagation → Recovery Blocker) with stochastic Monte Carlo parameter spreads.
                 </p>
               </div>
               <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
-                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Regulatory Catalyst</span>
-                <div className="text-xs font-bold text-gray-900">EASA Part-IS Mandate</div>
+                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Regulatory Reference</span>
+                <div className="text-xs font-bold text-gray-900">EASA Part-IS Framework</div>
                 <p className="text-[11px] text-gray-500 leading-snug">
-                  EU 2022/1645 &amp; 2023/203 make cyber resilience audits and 72-hour incident reporting legally mandatory by 2026.
+                  Risk mapping aligned with EASA Part-IS (EU 2022/1645 &amp; 2023/203) exercise requirements and EUROCAE ER-040 guidance.
                 </p>
               </div>
             </div>
@@ -526,7 +525,7 @@ export default function App() {
                   <span className="h-7 w-7 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold shrink-0">1</span>
                   <div>
                     <div className="text-xs font-bold text-gray-900 group-hover:text-indigo-700">Explore Cyber-Physical Failure Propagation</div>
-                    <div className="text-[11px] text-gray-500">Show how Stage 1 optical spoofing cascades into Stage 2 sector overload and Stage 3 controller distrust.</div>
+                    <div className="text-[11px] text-gray-500">Walk through Stage 1 optical spoofing, Stage 2 sector overload, and Stage 3 controller recovery blockers.</div>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-indigo-600 shrink-0" />
@@ -544,8 +543,8 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <span className="h-7 w-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold shrink-0">2</span>
                   <div>
-                    <div className="text-xs font-bold text-gray-900 group-hover:text-purple-700">Quantify Runway Capacity Collapse (Monte Carlo)</div>
-                    <div className="text-[11px] text-gray-500">Show Chart 02's 5th–95th percentile confidence band across 30 stochastic replicates and calculate $1.4M+ in mitigated disruption.</div>
+                    <div className="text-xs font-bold text-gray-900 group-hover:text-purple-700">Evaluate Modeled Capacity Recovery (Monte Carlo)</div>
+                    <div className="text-[11px] text-gray-500">Inspect Chart 02's 5th–95th percentile spread across 30 stochastic replicates and test illustrative disruption cost assumptions.</div>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-purple-600 shrink-0" />
@@ -562,8 +561,8 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <span className="h-7 w-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold shrink-0">3</span>
                   <div>
-                    <div className="text-xs font-bold text-gray-900 group-hover:text-emerald-700">Automate EASA Part-IS Regulatory Filing</div>
-                    <div className="text-[11px] text-gray-500">Demonstrate instant JSON risk register export and executive print-ready dossier complying with Art. IS.I.OR.230.</div>
+                    <div className="text-xs font-bold text-gray-900 group-hover:text-emerald-700">Generate Part-IS Exercise Risk Dossier</div>
+                    <div className="text-[11px] text-gray-500">Review the exercise draft risk register, timeline mapping, and export JSON or print-ready exercise documentation.</div>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-emerald-600 shrink-0" />
@@ -571,14 +570,14 @@ export default function App() {
             </div>
 
             {/* Bottom Actions */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-xs">
-              <div className="text-gray-500">
-                <span className="font-semibold text-gray-700">Pricing Model:</span> $180k–$450k ACV Enterprise SaaS per aerodrome cluster
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-100 text-xs">
+              <div className="text-gray-500 text-[11px]">
+                <span className="font-semibold text-gray-700">Exercise Scope:</span> Research prototype demonstrating Dhillon &amp; Moores (2001) tripartite controls with illustrative cost assumptions.
               </div>
               <button
                 type="button"
                 onClick={() => setShowVcTour(false)}
-                className="rounded-full bg-gray-900 px-5 py-2 font-semibold text-white hover:bg-black transition-colors"
+                className="rounded-full bg-gray-900 px-5 py-2 font-semibold text-white hover:bg-black transition-colors shrink-0"
               >
                 Got It, Let's Demo
               </button>

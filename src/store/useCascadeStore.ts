@@ -17,6 +17,17 @@ export type WorkspaceTab =
   | 'easa-compliance'
   | 'python-engine';
 
+export function workspaceTabFromHash(hash: string): WorkspaceTab | undefined {
+  const tab = hash.slice(1);
+  switch (tab) {
+    case 'topology':
+    case 'fmea-capacity':
+    case 'easa-compliance':
+    case 'python-engine':
+      return tab;
+  }
+}
+
 interface CascadeState {
   activeTab: WorkspaceTab;
   scenarios: ScenarioPreset[];
@@ -73,7 +84,7 @@ const initialSimulation = runDiscreteEventSimulation({
 let requestIdCounter = 0;
 
 export const useCascadeStore = create<CascadeState>((set, get) => ({
-  activeTab: 'topology',
+  activeTab: (typeof window !== 'undefined' && workspaceTabFromHash(window.location.hash)) || 'topology',
   scenarios: SCENARIO_PRESETS,
   activeScenarioId: initialScenario.id,
   baselineMovementsPerHour: initialScenario.baseline_movements_per_hour,
