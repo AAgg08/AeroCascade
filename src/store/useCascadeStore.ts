@@ -17,6 +17,17 @@ export type WorkspaceTab =
   | 'easa-compliance'
   | 'python-engine';
 
+export function workspaceTabFromHash(hash: string): WorkspaceTab | undefined {
+  const tab = hash.slice(1);
+  switch (tab) {
+    case 'topology':
+    case 'fmea-capacity':
+    case 'easa-compliance':
+    case 'python-engine':
+      return tab;
+  }
+}
+
 interface CascadeState {
   activeTab: WorkspaceTab;
   scenarios: ScenarioPreset[];
@@ -36,6 +47,7 @@ interface CascadeState {
   latestRequestId: number;
   pendingRequestsCount: number;
   backendError: string | null;
+  costPerDelayedMovement: number;
 
   setActiveTab: (tab: WorkspaceTab) => void;
   selectScenario: (scenarioId: string) => void;
@@ -46,6 +58,7 @@ interface CascadeState {
   applyGlobalPreset: (mode: 'baseline' | 'technical-heavy' | 'tripartite-balanced' | 'unmitigated-stress') => void;
   setTriggerHour: (hour: number) => void;
   setBaselineMovements: (mvmt: number) => void;
+  setCostPerDelayedMovement: (cost: number) => void;
   executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean; replicates?: number }) => Promise<void>;
   clearBackendError: () => void;
 }
@@ -71,7 +84,7 @@ const initialSimulation = runDiscreteEventSimulation({
 let requestIdCounter = 0;
 
 export const useCascadeStore = create<CascadeState>((set, get) => ({
-  activeTab: 'topology',
+  activeTab: (typeof window !== 'undefined' && workspaceTabFromHash(window.location.hash)) || 'topology',
   scenarios: SCENARIO_PRESETS,
   activeScenarioId: initialScenario.id,
   baselineMovementsPerHour: initialScenario.baseline_movements_per_hour,
@@ -89,8 +102,12 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   latestRequestId: 0,
   pendingRequestsCount: 0,
   backendError: null,
+  costPerDelayedMovement: 7500,
 
   clearBackendError: () => set({ backendError: null }),
+
+  setCostPerDelayedMovement: (cost: number) =>
+    set({ costPerDelayedMovement: Math.max(0, Number.isFinite(cost) ? cost : 0) }),
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 
