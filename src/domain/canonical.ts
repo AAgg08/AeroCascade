@@ -93,6 +93,36 @@ export interface CanonicalTopology {
   redundancy_groups?: Record<string, RedundancyGroupConfig>;
 }
 
+export interface ImportErrorDetail {
+  row?: number | null;
+  column?: string | null;
+  message: string;
+  source_ref?: string | null;
+  severity: 'ERROR' | 'WARNING';
+}
+
+export interface ImportSummary {
+  node_count: number;
+  edge_count: number;
+  error_count: number;
+  warning_count: number;
+  cycle_count: number;
+  provisional_id_count: number;
+  deduplicated_edge_count: number;
+}
+
+export interface ImportPreviewResponse {
+  valid: boolean;
+  file_name: string;
+  file_type: string;
+  summary: ImportSummary;
+  errors: ImportErrorDetail[];
+  warnings: ImportErrorDetail[];
+  cycles: string[];
+  cycle_handling_explanation?: string | null;
+  preview_topology?: CanonicalTopology | null;
+}
+
 /**
  * Single authoritative client adapter:
  * Converts a CanonicalTopology to the SimulationInputParams consumed by the simulation engine.

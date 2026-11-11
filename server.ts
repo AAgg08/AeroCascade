@@ -195,6 +195,15 @@ async function startServer() {
     });
   });
 
+  app.all('/api/import*', async (req, res) => {
+    await proxyToPythonBackend(req, res, (reason) => {
+      res.status(503).json({
+        error: 'Topology importer backend offline',
+        detail: reason,
+      });
+    });
+  });
+
   app.get('/api/backend-source', (_req, res) => {
     try {
       const backendDir = path.resolve(process.cwd(), 'backend');

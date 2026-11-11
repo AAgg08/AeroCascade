@@ -10,10 +10,12 @@ Exposes authoritative REST API endpoints for:
 """
 
 from __future__ import annotations
+import json
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, status, Request, Response, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import networkx as nx
 
 from .canonical import (
     CanonicalTopology,
@@ -21,6 +23,14 @@ from .canonical import (
 )
 from .graph_engine import build_dependency_graph
 from .models import SimulationRequest, SimulationResponse
+from .importer import (
+    ImportPreviewResponse,
+    SaveImportRequest,
+    generate_30_node_fixture_xlsx,
+    generate_template,
+    get_30_node_fixture,
+    parse_file_to_preview,
+)
 from .repository import (
     StaleVersionConflictError,
     TopologyNotFoundError,
@@ -208,3 +218,92 @@ def get_run(run_id: str) -> dict:
         return repo.get_run(run_id)
     except TopologyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ==============================================================================
+# Topology Importer REST Endpoints
+# ==============================================================================
+
+@app.post("/api/import/preview", response_model=ImportPreviewResponse)
+async def preview_topology_import(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+) -> ImportPreviewResponse:
+    content_type = request.headers.get("content-type", "")
+    file_bytes: bytes = b""
+    file_name: str = "upload.xlsx"
+    overrides: Dict[str, Any] = {}
+
+    if "multipart/form-data" in content_type and file is not None:
+        file_name = file.filename or "upload.xlsx"
+        try:
+            file_bytes = await file.read()
+        finally:
+            await file.close()
+    else:
+        body = await request.json()
+        file_name = body.get("file_name", "upload.json")
+        overrides["name"] = body.get("name")
+        if "content_base64" in body and body["content_base64"]:
+            import base64
+            file_bytes = base64.b64decode(body["content_base64"])
+        elif "content_text" in body and body["content_text"]:
+            file_bytes = body["content_text"].encode("utf-8")
+        elif "canonical" in body and body["canonical"]:
+            file_bytes = json.dumps(body["canonical"]).encode("utf-8")
+            file_name = "topology.json"
+        else:
+            raise HTTPException(status_code=400, detail="No file content provided in request.")
+
+    return parse_file_to_preview(file_bytes=file_bytes, file_name=file_name, overrides=overrides)
+
+
+@app.post("/api/import/save", status_code=status.HTTP_201_CREATED)
+def save_imported_topology(body: SaveImportRequest) -> dict:
+    # 1. Verify cycles confirmation if cycles exist
+    g = nx.DiGraph()
+    for n in body.canonical.nodes:
+        g.add_node(n.id)
+    for d in body.canonical.dependencies:
+        g.add_edge(d.provider_node_id, d.dependent_node_id)
+    cycles = list(nx.simple_cycles(g))
+    if cycles and not body.confirm_cycles:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Topology contains {len(cycles)} feedback cycle(s). You must acknowledge the cycle simulation dynamics by setting confirm_cycles=true before saving.",
+        )
+
+    # 2. Save in one transaction
+    try:
+        created = repo.create_topology(
+            name=body.name,
+            canonical=body.canonical,
+            description=body.description or body.canonical.description,
+        )
+        return created
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to save imported topology: {str(e)}")
+
+
+@app.get("/api/import/templates/{template_name}")
+def download_import_template(template_name: str) -> Response:
+    tname = template_name.lower().strip()
+    if tname in ("synthetic-30-nodes.xlsx", "synthetic_airport_30nodes.xlsx", "30-nodes.xlsx"):
+        content = generate_30_node_fixture_xlsx()
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "synthetic_airport_30nodes.xlsx"
+    elif tname in ("30-nodes.json", "synthetic-30-nodes.json"):
+        content = get_30_node_fixture().model_dump_json(indent=2).encode("utf-8")
+        media_type = "application/json"
+        filename = "synthetic_airport_30nodes.json"
+    else:
+        try:
+            content, media_type, filename = generate_template(template_name)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

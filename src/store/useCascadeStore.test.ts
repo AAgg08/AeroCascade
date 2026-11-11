@@ -844,5 +844,145 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(cloneOk, true);
     assert.equal(useCascadeStore.getState().currentTopologyId, 'topo-clone-999');
     assert.equal(useCascadeStore.getState().currentTopologyVersion, 1);
+
+    // 5. uploadImportFile (Server-Side Import Preview)
+    const mockFile = new File(['test,csv,data'], 'synthetic_vendors.csv', { type: 'text/csv' });
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/import/preview')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            valid: true,
+            file_name: 'synthetic_vendors.csv',
+            file_type: 'csv',
+            summary: {
+              node_count: 5,
+              edge_count: 4,
+              error_count: 0,
+              warning_count: 1,
+              cycle_count: 0,
+              provisional_id_count: 0,
+              deduplicated_edge_count: 1,
+            },
+            errors: [],
+            warnings: [
+              {
+                row: 2,
+                column: 'Upstream IDs',
+                message: 'Reconciled reciprocal declaration',
+                severity: 'WARNING',
+              },
+            ],
+            cycles: [],
+            preview_topology: {
+              schema_version: '1.0.0',
+              topology_id: 'topo-imported-001',
+              name: 'Synthetic Airport Import',
+              description: 'Imported test',
+              version: 1,
+              aerodrome_profile: 'EHAM',
+              baseline_movements_per_hour: 48,
+              trigger_hour: 4,
+              horizon_hours: 24,
+              cost_per_delayed_movement: 7500,
+              nodes: structuredClone(SCENARIO_PRESETS[0].nodes),
+              dependencies: SCENARIO_PRESETS[0].edges.map((e) => ({
+                id: e.id,
+                provider_node_id: e.source,
+                dependent_node_id: e.target,
+                coupling_weight: e.coupling_weight,
+                propagation_mechanism: e.propagation_mechanism,
+                protocol_layer: 'IP/Ethernet',
+              })),
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+
+    const uploadOk = await useCascadeStore.getState().uploadImportFile(mockFile);
+    assert.equal(uploadOk, true);
+    assert.equal(useCascadeStore.getState().importPreview?.valid, true);
+    assert.equal(useCascadeStore.getState().importPreview?.summary.node_count, 5);
+    assert.equal(useCascadeStore.getState().importPreview?.summary.deduplicated_edge_count, 1);
+
+    // 6. saveImportedTopology
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/import/save') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        assert.equal(body.name, 'Final Airport Hub');
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 'topo-imported-001',
+            name: body.name,
+            current_version: 1,
+          }),
+        } as Response;
+      }
+      if (urlStr.includes('/api/topologies/topo-imported-001')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            schema_version: '1.0.0',
+            topology_id: 'topo-imported-001',
+            name: 'Final Airport Hub',
+            description: 'Test',
+            version: 1,
+            aerodrome_profile: 'EHAM',
+            baseline_movements_per_hour: 48,
+            trigger_hour: 4,
+            horizon_hours: 24,
+            cost_per_delayed_movement: 7500,
+            nodes: structuredClone(SCENARIO_PRESETS[0].nodes),
+            dependencies: [],
+          }),
+        } as Response;
+      }
+      if (urlStr.includes('/api/topologies')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ topologies: [] }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+
+    const saveImportOk = await useCascadeStore.getState().saveImportedTopology('Final Airport Hub');
+    assert.equal(saveImportOk, true);
+    assert.equal(useCascadeStore.getState().currentTopologyId, 'topo-imported-001');
+    assert.equal(useCascadeStore.getState().importPreview, null);
+
+    // 7. clearImportPreview (cancel with no save)
+    useCascadeStore.setState({
+      importPreview: {
+        valid: true,
+        file_name: 'cancel.xlsx',
+        file_type: 'xlsx',
+        summary: {
+          node_count: 1,
+          edge_count: 0,
+          error_count: 0,
+          warning_count: 0,
+          cycle_count: 0,
+          provisional_id_count: 0,
+          deduplicated_edge_count: 0,
+        },
+        errors: [],
+        warnings: [],
+        cycles: [],
+      },
+      importError: 'Old error',
+    });
+    useCascadeStore.getState().clearImportPreview();
+    assert.equal(useCascadeStore.getState().importPreview, null);
+    assert.equal(useCascadeStore.getState().importError, null);
   });
 });

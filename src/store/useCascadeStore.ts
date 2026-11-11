@@ -14,6 +14,7 @@ import {
   presetToCanonicalTopology,
   canonicalTopologyToSimulationInput,
   type CanonicalTopology,
+  type ImportPreviewResponse,
 } from '../domain/canonical.ts';
 import {
   type DependencyEdgeModel,
@@ -99,6 +100,9 @@ interface CascadeState {
   topologyLoading: boolean;
   topologyConflictError: string | null;
   topologySuccessMessage: string | null;
+  importPreview: ImportPreviewResponse | null;
+  importLoading: boolean;
+  importError: string | null;
 
   setActiveTab: (tab: WorkspaceTab) => void;
   selectScenario: (scenarioId: string, settings?: WorkspaceSettings) => void;
@@ -120,6 +124,9 @@ interface CascadeState {
   cloneTopology: (newName: string, topologyId?: string) => Promise<boolean>;
   clearTopologyConflictError: () => void;
   clearTopologySuccessMessage: () => void;
+  uploadImportFile: (file: File) => Promise<boolean>;
+  saveImportedTopology: (name: string, confirmCycles?: boolean) => Promise<boolean>;
+  clearImportPreview: () => void;
 }
 
 const initialScenario = SCENARIO_PRESETS.find((s) => s.id === savedWorkspace.settings?.activeScenarioId) ?? SCENARIO_PRESETS[0];
@@ -173,6 +180,9 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   topologyLoading: false,
   topologyConflictError: null,
   topologySuccessMessage: null,
+  importPreview: null,
+  importLoading: false,
+  importError: null,
 
   setTopologyModalOpen: (open: boolean) => set({ isTopologyModalOpen: open }),
   clearTopologyConflictError: () => set({ topologyConflictError: null }),
@@ -666,6 +676,82 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       return false;
     }
   },
+
+  uploadImportFile: async (file: File) => {
+    set({ importLoading: true, importError: null });
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/import/preview', {
+        method: 'POST',
+        body: formData,
+      });
+      const data: ImportPreviewResponse = await res.json();
+      set({
+        importPreview: data,
+        importLoading: false,
+        importError: data.valid ? null : (data.errors[0]?.message || 'Import preview validation failed'),
+      });
+      return data.valid;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upload failed';
+      set({
+        importLoading: false,
+        importError: msg,
+      });
+      return false;
+    }
+  },
+
+  saveImportedTopology: async (name: string, confirmCycles?: boolean) => {
+    const state = get();
+    if (!state.importPreview?.preview_topology) {
+      set({ importError: 'No valid import preview available to save.' });
+      return false;
+    }
+    set({ importLoading: true, importError: null });
+    try {
+      const res = await fetch('/api/import/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          canonical: state.importPreview.preview_topology,
+          name: name || state.importPreview.preview_topology.name,
+          confirm_cycles: Boolean(confirmCycles),
+          change_summary: `Imported from ${state.importPreview.file_name}`,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Save failed' }));
+        set({
+          importLoading: false,
+          importError: err.detail || `Save failed with status ${res.status}`,
+        });
+        return false;
+      }
+
+      const data = await res.json();
+      set({
+        importPreview: null,
+        importLoading: false,
+        importError: null,
+        topologySuccessMessage: `Successfully saved and imported "${data.name}" (Version 1)`,
+      });
+      await get().fetchTopologies();
+      await get().openTopology(data.id, 1);
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed';
+      set({
+        importLoading: false,
+        importError: msg,
+      });
+      return false;
+    }
+  },
+
+  clearImportPreview: () => set({ importPreview: null, importError: null }),
 }));
 
 if (typeof window !== 'undefined') {
