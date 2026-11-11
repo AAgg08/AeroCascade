@@ -2,17 +2,15 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   Activity,
   AlertCircle,
-  Briefcase,
-  ChevronRight,
   DollarSign,
   FileText,
   Network,
   RotateCw,
   ShieldCheck,
-  Sparkles,
   Terminal,
-  X,
 } from 'lucide-react';
+import { GettingStarted } from './components/GettingStarted.tsx';
+import { WorkspaceErrorBoundary } from './components/WorkspaceErrorBoundary.tsx';
 import { useCascadeStore, workspaceTabFromHash, type WorkspaceTab } from './store/useCascadeStore.ts';
 
 const WORKSPACE_VIEWS = {
@@ -31,6 +29,9 @@ const NAV_ITEMS: { id: WorkspaceTab; label: string; icon: typeof Network }[] = [
 
 export default function App() {
   const {
+    selectScenario,
+    activeScenarioId,
+    workspaceSaveStatus,
     activeTab,
     setActiveTab,
     simulationResult,
@@ -52,17 +53,21 @@ export default function App() {
 
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
   const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
-  const [showVcTour, setShowVcTour] = useState(false);
+  const [showGettingStarted, setShowGettingStarted] = useState(false);
   const ActiveWorkspace = WORKSPACE_VIEWS[activeTab];
 
   useEffect(() => {
     const handleHash = () => {
-      const tab = workspaceTabFromHash(window.location.hash);
-      if (tab) setActiveTab(tab);
+      const tab = workspaceTabFromHash(window.location.hash) ?? 'topology';
+      useCascadeStore.setState({ activeTab: tab });
     };
     handleHash();
     window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
+    window.addEventListener('popstate', handleHash);
+    return () => {
+      window.removeEventListener('hashchange', handleHash);
+      window.removeEventListener('popstate', handleHash);
+    };
   }, [setActiveTab]);
 
   return (
@@ -75,6 +80,8 @@ export default function App() {
           ? `Simulation error: ${backendError}`
           : isStale
           ? `Inputs modified. Editor is at Revision #${inputRevision}, displaying previous results from Revision #${simulationResult.provenance?.input_revision ?? 1}.`
+          : simulationResult.provenance?.engine !== 'fastapi-python'
+          ? 'Illustrative preview. Run Simulation to evaluate these settings with the Python engine.'
           : `Simulation complete. Engine: ${simulationResult.provenance?.engine_label}. Input Revision #${simulationResult.provenance?.input_revision ?? 1}.`}
       </div>
 
@@ -130,7 +137,7 @@ export default function App() {
           <div className="flex items-center gap-4">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">
-                Dashboard
+                AeroCascade
               </h1>
               <p className="text-xs text-gray-500 font-medium hidden sm:block">
                 AeroCascade · Remote Tower Cybersecurity &amp; Cascading Failure Simulator
@@ -141,21 +148,28 @@ export default function App() {
             </div>
             <button
               type="button"
-              data-testid="vc-tour-btn"
-              onClick={() => setShowVcTour(true)}
+              data-testid="getting-started-btn"
+              onClick={() => setShowGettingStarted(true)}
               className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-200/80 px-3.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100/80 transition-all shadow-xs"
             >
-              <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
-              <span>VC Demo Guide</span>
+              <span>Getting started</span>
             </button>
           </div>
+
+          <p role="status" className="text-xs text-gray-600" data-testid="workspace-save-status">
+            {workspaceSaveStatus === 'saved' ? 'Workspace saved on this device'
+              : workspaceSaveStatus === 'restored' ? 'Saved settings restored · browser preview'
+              : workspaceSaveStatus === 'unavailable' ? 'Browser storage unavailable · export your exercise before leaving'
+              : workspaceSaveStatus === 'invalid' ? 'Saved settings could not be restored · scenario defaults loaded'
+              : 'Settings save automatically on this device'}
+          </p>
 
           {/* Header Action Controls */}
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Provenance Badge */}
             <span
               data-testid="provenance-engine-badge"
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/80 px-3 py-1 text-xs font-semibold text-gray-700 shadow-xs"
+              className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/80 px-3 py-1 text-xs font-semibold text-gray-700 shadow-xs"
             >
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
               <span>
@@ -433,9 +447,11 @@ export default function App() {
           </section>
 
           {/* Active Workspace View */}
+          <WorkspaceErrorBoundary key={activeTab}>
           <Suspense fallback={<p role="status" className="px-4 py-8 text-sm text-gray-600">Loading workspace…</p>}>
             <ActiveWorkspace />
           </Suspense>
+          </WorkspaceErrorBoundary>
         </main>
 
         {/* Clean Light Footer */}
@@ -451,139 +467,9 @@ export default function App() {
         </footer>
       </div>
 
-      {/* VC Analyst Demo Walkthrough Modal */}
-      {showVcTour && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="vc-tour-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-xs transition-opacity"
-        >
-          <div className="relative w-full max-w-2xl rounded-3xl bg-white p-6 sm:p-8 shadow-2xl border border-gray-100 space-y-6">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-5">
-              <div>
-                <div className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-100 px-3 py-0.5 text-xs font-semibold text-indigo-700 mb-2">
-                  <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
-                  VC Demo &amp; Investment Overview
-                </div>
-                <h2 id="vc-tour-title" className="text-xl font-bold text-gray-900 tracking-tight">
-                  AeroCascade: Resiliency Digital Twin for Critical Aviation Infrastructure
-                </h2>
-                <p className="text-xs text-gray-500 mt-1">
-                  Predicting and mitigating multi-million dollar cascading capacity collapse in Remote Tower Centres (RTC)
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowVcTour(false)}
-                className="rounded-full p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                aria-label="Close VC Tour Modal"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Core Analytical Framework Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Operational Context</span>
-                <div className="text-xs font-bold text-gray-900">RTC Digital Consolidation</div>
-                <p className="text-[11px] text-gray-500 leading-snug">
-                  ANSPs centralize air traffic control into multi-aerodrome digital centres, introducing cyber-physical dependencies across camera feeds and strip bays.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
-                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Analytical Model</span>
-                <div className="text-xs font-bold text-gray-900">Causal SimPy Engine</div>
-                <p className="text-[11px] text-gray-500 leading-snug">
-                  Simulates 3-stage failure propagation (Cyber Trigger → Physical Propagation → Recovery Blocker) with stochastic Monte Carlo parameter spreads.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-1">
-                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Regulatory Reference</span>
-                <div className="text-xs font-bold text-gray-900">EASA Part-IS Framework</div>
-                <p className="text-[11px] text-gray-500 leading-snug">
-                  Risk mapping aligned with EASA Part-IS (EU 2022/1645 &amp; 2023/203) exercise requirements and EUROCAE ER-040 guidance.
-                </p>
-              </div>
-            </div>
-
-            {/* 3-Step Clickable Demo Flow */}
-            <div className="space-y-2.5">
-              <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Recommended 3-Minute Demo Sequence</span>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('topology');
-                  setShowVcTour(false);
-                }}
-                className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/40 text-left transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="h-7 w-7 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                  <div>
-                    <div className="text-xs font-bold text-gray-900 group-hover:text-indigo-700">Explore Cyber-Physical Failure Propagation</div>
-                    <div className="text-[11px] text-gray-500">Walk through Stage 1 optical spoofing, Stage 2 sector overload, and Stage 3 controller recovery blockers.</div>
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-indigo-600 shrink-0" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('fmea-capacity');
-                  executeSimulationOnServer({ replicates: 30 });
-                  setShowVcTour(false);
-                }}
-                className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-gray-100 hover:border-purple-200 hover:bg-purple-50/40 text-left transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="h-7 w-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                  <div>
-                    <div className="text-xs font-bold text-gray-900 group-hover:text-purple-700">Evaluate Modeled Capacity Recovery (Monte Carlo)</div>
-                    <div className="text-[11px] text-gray-500">Inspect Chart 02's 5th–95th percentile spread across 30 stochastic replicates and test illustrative disruption cost assumptions.</div>
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-purple-600 shrink-0" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('easa-compliance');
-                  setShowVcTour(false);
-                }}
-                className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-gray-100 hover:border-emerald-200 hover:bg-emerald-50/40 text-left transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="h-7 w-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                  <div>
-                    <div className="text-xs font-bold text-gray-900 group-hover:text-emerald-700">Generate Part-IS Exercise Risk Dossier</div>
-                    <div className="text-[11px] text-gray-500">Review the exercise draft risk register, timeline mapping, and export JSON or print-ready exercise documentation.</div>
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-emerald-600 shrink-0" />
-              </button>
-            </div>
-
-            {/* Bottom Actions */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-100 text-xs">
-              <div className="text-gray-500 text-[11px]">
-                <span className="font-semibold text-gray-700">Exercise Scope:</span> Research prototype demonstrating Dhillon &amp; Moores (2001) tripartite controls with illustrative cost assumptions.
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowVcTour(false)}
-                className="rounded-full bg-gray-900 px-5 py-2 font-semibold text-white hover:bg-black transition-colors shrink-0"
-              >
-                Got It, Let's Demo
-              </button>
-            </div>
-          </div>
-        </div>
+      {showGettingStarted && (
+        <GettingStarted onClose={() => setShowGettingStarted(false)} onNavigate={setActiveTab}
+          onRun={() => executeSimulationOnServer()} onReset={() => selectScenario(activeScenarioId)} isRunning={isSimulating} />
       )}
     </div>
   );
