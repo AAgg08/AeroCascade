@@ -153,7 +153,7 @@ export function EASAComplianceView() {
           {/* Three-Stage Notification Timeline (EASA IS.I.OR.230) */}
           <div className="border-b border-gray-100 pb-6">
             <div className="text-xs font-bold text-gray-900 uppercase tracking-wider mb-3">
-              EASA PART-IS IS.I.OR.230 MANDATED REPORTING WORKFLOW
+              EASA PART-IS IS.I.OR.230 EXERCISE REPORTING WORKFLOW
             </div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-5">

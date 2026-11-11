@@ -1,4 +1,13 @@
 import { create } from 'zustand';
+import { loadWorkspace, parseWorkspace, serializeWorkspace, WORKSPACE_STORAGE_KEY, type WorkspaceSettings } from './workspaceSession.ts';
+
+let workspaceStorage: Storage | undefined;
+try {
+  if (typeof window !== 'undefined') workspaceStorage = window.localStorage;
+} catch {
+  // Storage can be disabled by the browser.
+}
+const savedWorkspace = loadWorkspace(workspaceStorage);
 import { SCENARIO_PRESETS } from '../domain/scenarios.ts';
 import { runDiscreteEventSimulation } from '../domain/simulationEngine.ts';
 import {
@@ -17,7 +26,37 @@ export type WorkspaceTab =
   | 'easa-compliance'
   | 'python-engine';
 
+export function workspaceTabFromHash(hash: string): WorkspaceTab | undefined {
+  const tab = hash.slice(1);
+  switch (tab) {
+    case 'topology':
+    case 'fmea-capacity':
+    case 'easa-compliance':
+    case 'python-engine':
+      return tab;
+  }
+}
+
+function simulationErrorMessage(payload: unknown, status: number): string {
+  if (payload && typeof payload === 'object') {
+    const { error, detail } = payload as Record<string, unknown>;
+    for (const value of [error, detail]) {
+      if (typeof value === 'string' && value.trim()) return value;
+      if (Array.isArray(value)) {
+        const messages = value.slice(0, 3).flatMap((item) => {
+          if (!item || typeof item.msg !== 'string') return [];
+          const field = Array.isArray(item.loc) ? item.loc.filter((part: unknown) => part !== 'body').join('.') : '';
+          return field ? [`${field}: ${item.msg}`] : [item.msg];
+        });
+        if (messages.length > 0) return `Check the simulation inputs. ${messages.join(' ')}`;
+      }
+    }
+  }
+  return `Simulation request failed (HTTP ${status}). Please try again.`;
+}
+
 interface CascadeState {
+  workspaceSaveStatus: 'none' | 'saved' | 'restored' | 'invalid' | 'unavailable';
   activeTab: WorkspaceTab;
   scenarios: ScenarioPreset[];
   activeScenarioId: string;
@@ -36,9 +75,11 @@ interface CascadeState {
   latestRequestId: number;
   pendingRequestsCount: number;
   backendError: string | null;
+  costPerDelayedMovement: number;
 
   setActiveTab: (tab: WorkspaceTab) => void;
-  selectScenario: (scenarioId: string) => void;
+  selectScenario: (scenarioId: string, settings?: WorkspaceSettings) => void;
+  importWorkspace: (text: string) => boolean;
   selectNode: (nodeId: string | null) => void;
   updateNodeTripartite: (nodeId: string, partial: Partial<TripartiteControls>) => void;
   updateNodeFMEA: (nodeId: string, partial: Partial<FMEAMetrics>) => void;
@@ -46,17 +87,21 @@ interface CascadeState {
   applyGlobalPreset: (mode: 'baseline' | 'technical-heavy' | 'tripartite-balanced' | 'unmitigated-stress') => void;
   setTriggerHour: (hour: number) => void;
   setBaselineMovements: (mvmt: number) => void;
+  setCostPerDelayedMovement: (cost: number) => void;
   executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean; replicates?: number }) => Promise<void>;
   clearBackendError: () => void;
 }
 
-const initialScenario = SCENARIO_PRESETS[0];
+const initialScenario = SCENARIO_PRESETS.find((s) => s.id === savedWorkspace.settings?.activeScenarioId) ?? SCENARIO_PRESETS[0];
+const initialNodes = savedWorkspace.settings?.nodes ?? structuredClone(initialScenario.nodes);
+const initialBaseline = savedWorkspace.settings?.baselineMovementsPerHour ?? initialScenario.baseline_movements_per_hour;
+const initialTrigger = savedWorkspace.settings?.triggerHour ?? initialScenario.trigger_hour;
 const initialSimulation = runDiscreteEventSimulation({
   scenario_id: initialScenario.id,
   horizon_hours: initialScenario.horizon_hours,
-  baseline_movements_per_hour: initialScenario.baseline_movements_per_hour,
-  trigger_hour: initialScenario.trigger_hour,
-  nodes: structuredClone(initialScenario.nodes),
+  baseline_movements_per_hour: initialBaseline,
+  trigger_hour: initialTrigger,
+  nodes: initialNodes,
   edges: structuredClone(initialScenario.edges),
   provenance: {
     engine: 'browser-typescript',
@@ -71,13 +116,14 @@ const initialSimulation = runDiscreteEventSimulation({
 let requestIdCounter = 0;
 
 export const useCascadeStore = create<CascadeState>((set, get) => ({
-  activeTab: 'topology',
+  workspaceSaveStatus: savedWorkspace.status,
+  activeTab: (typeof window !== 'undefined' && workspaceTabFromHash(window.location.hash)) || 'topology',
   scenarios: SCENARIO_PRESETS,
   activeScenarioId: initialScenario.id,
-  baselineMovementsPerHour: initialScenario.baseline_movements_per_hour,
-  triggerHour: initialScenario.trigger_hour,
+  baselineMovementsPerHour: initialBaseline,
+  triggerHour: initialTrigger,
   horizonHours: initialScenario.horizon_hours,
-  nodes: structuredClone(initialScenario.nodes),
+  nodes: initialNodes,
   edges: structuredClone(initialScenario.edges),
   selectedNodeId: initialScenario.nodes[0]?.id ?? null,
   simulationResult: initialSimulation,
@@ -89,21 +135,32 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   latestRequestId: 0,
   pendingRequestsCount: 0,
   backendError: null,
+  costPerDelayedMovement: savedWorkspace.settings?.costPerDelayedMovement ?? 7500,
 
   clearBackendError: () => set({ backendError: null }),
 
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  setCostPerDelayedMovement: (cost: number) =>
+    set({ costPerDelayedMovement: Math.max(0, Number.isFinite(cost) ? cost : 0) }),
 
-  selectScenario: (scenarioId) => {
+  setActiveTab: (tab) => {
+    if (typeof window !== 'undefined' && window.location.hash !== `#${tab}`) {
+      window.history.pushState(null, '', `#${tab}`);
+    }
+    set({ activeTab: tab });
+  },
+
+  selectScenario: (scenarioId, settings) => {
     const nextRev = get().inputRevision + 1;
     const found = SCENARIO_PRESETS.find((s) => s.id === scenarioId) ?? SCENARIO_PRESETS[0];
-    const clonedNodes = structuredClone(found.nodes);
+    const clonedNodes = structuredClone(settings?.nodes ?? found.nodes);
     const clonedEdges = structuredClone(found.edges);
+    const baseline = settings?.baselineMovementsPerHour ?? found.baseline_movements_per_hour;
+    const trigger = settings?.triggerHour ?? found.trigger_hour;
     const simResult = runDiscreteEventSimulation({
       scenario_id: found.id,
       horizon_hours: found.horizon_hours,
-      baseline_movements_per_hour: found.baseline_movements_per_hour,
-      trigger_hour: found.trigger_hour,
+      baseline_movements_per_hour: baseline,
+      trigger_hour: trigger,
       nodes: clonedNodes,
       edges: clonedEdges,
       provenance: {
@@ -117,16 +174,25 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
     });
     set({
       activeScenarioId: found.id,
-      baselineMovementsPerHour: found.baseline_movements_per_hour,
-      triggerHour: found.trigger_hour,
+      baselineMovementsPerHour: baseline,
+      triggerHour: trigger,
       horizonHours: found.horizon_hours,
       nodes: clonedNodes,
       edges: clonedEdges,
       selectedNodeId: clonedNodes[0]?.id ?? null,
       simulationResult: simResult,
+      backendError: null,
+      costPerDelayedMovement: settings?.costPerDelayedMovement ?? get().costPerDelayedMovement,
       inputRevision: nextRev,
       lastSyncedAt: `Scenario Loaded (${found.id}) · Rev #${nextRev}`,
     });
+  },
+
+  importWorkspace: (text) => {
+    const settings = parseWorkspace(text);
+    if (!settings) return false;
+    get().selectScenario(settings.activeScenarioId, settings);
+    return true;
   },
 
   selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
@@ -286,6 +352,7 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       const url = opts?.allowLegacyDemo ? '/api/simulate?allow_legacy_demo=true' : '/api/simulate';
       const response = await fetch(url, {
         method: 'POST',
+        signal: AbortSignal.timeout(25_000),
         headers: {
           'Content-Type': 'application/json',
           ...(opts?.allowLegacyDemo ? { 'x-allow-legacy-demo': 'true' } : {}),
@@ -305,13 +372,21 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => null);
-        errorMessage = errJson?.error || errJson?.detail || `Simulation server returned HTTP ${response.status}`;
+        errorMessage = simulationErrorMessage(errJson, response.status);
       } else {
-        responseData = await response.json();
+        const data: SimulationResponse | null = await response.json();
+        if (!data?.summary_kpis || !data.easa_notification || !data.provenance
+          || !Array.isArray(data.hourly_capacity) || !Array.isArray(data.events) || !Array.isArray(data.node_analytics)) {
+          errorMessage = 'The simulation returned incomplete results. Please try again.';
+        } else {
+          responseData = data;
+        }
       }
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err);
-      errorMessage = `Failed to connect to simulation backend: ${errMessage}`;
+      errorMessage = err instanceof Error && err.name === 'TimeoutError'
+        ? 'The simulation took too long to respond. Please try again.'
+        : `Failed to connect to simulation backend: ${errMessage}`;
     }
 
     // Decrement counter exactly once per dispatch using current state after body parsing settles:
@@ -357,3 +432,19 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
     }
   },
 }));
+
+if (typeof window !== 'undefined') {
+  useCascadeStore.subscribe((state, previous) => {
+    if (state.nodes === previous.nodes && state.activeScenarioId === previous.activeScenarioId
+      && state.baselineMovementsPerHour === previous.baselineMovementsPerHour
+      && state.triggerHour === previous.triggerHour
+      && state.costPerDelayedMovement === previous.costPerDelayedMovement) return;
+    try {
+      if (!workspaceStorage) throw new Error('Storage unavailable');
+      workspaceStorage.setItem(WORKSPACE_STORAGE_KEY, serializeWorkspace(state));
+      useCascadeStore.setState({ workspaceSaveStatus: 'saved' });
+    } catch {
+      useCascadeStore.setState({ workspaceSaveStatus: 'unavailable' });
+    }
+  });
+}

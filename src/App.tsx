@@ -1,18 +1,24 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   Activity,
   AlertCircle,
+  DollarSign,
   FileText,
   Network,
   RotateCw,
   ShieldCheck,
   Terminal,
 } from 'lucide-react';
-import { EASAComplianceView } from './components/EASAComplianceView.tsx';
-import { FMEACapacityAnalytics } from './components/FMEACapacityAnalytics.tsx';
-import { PythonBackendView } from './components/PythonBackendView.tsx';
-import { TopologyWorkspace } from './components/TopologyWorkspace.tsx';
-import { useCascadeStore, type WorkspaceTab } from './store/useCascadeStore.ts';
+import { GettingStarted } from './components/GettingStarted.tsx';
+import { WorkspaceErrorBoundary } from './components/WorkspaceErrorBoundary.tsx';
+import { useCascadeStore, workspaceTabFromHash, type WorkspaceTab } from './store/useCascadeStore.ts';
+
+const WORKSPACE_VIEWS = {
+  topology: lazy(() => import('./components/TopologyWorkspace.tsx').then((module) => ({ default: module.TopologyWorkspace }))),
+  'fmea-capacity': lazy(() => import('./components/FMEACapacityAnalytics.tsx').then((module) => ({ default: module.FMEACapacityAnalytics }))),
+  'easa-compliance': lazy(() => import('./components/EASAComplianceView.tsx').then((module) => ({ default: module.EASAComplianceView }))),
+  'python-engine': lazy(() => import('./components/PythonBackendView.tsx').then((module) => ({ default: module.PythonBackendView }))),
+};
 
 const NAV_ITEMS: { id: WorkspaceTab; label: string; icon: typeof Network }[] = [
   { id: 'topology', label: 'Topology & DES', icon: Network },
@@ -23,6 +29,9 @@ const NAV_ITEMS: { id: WorkspaceTab; label: string; icon: typeof Network }[] = [
 
 export default function App() {
   const {
+    selectScenario,
+    activeScenarioId,
+    workspaceSaveStatus,
     activeTab,
     setActiveTab,
     simulationResult,
@@ -32,6 +41,8 @@ export default function App() {
     inputRevision,
     backendError,
     clearBackendError,
+    costPerDelayedMovement,
+    setCostPerDelayedMovement,
   } = useCascadeStore();
 
   const isStale = inputRevision > (simulationResult.provenance?.input_revision ?? 0);
@@ -42,17 +53,21 @@ export default function App() {
 
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
   const isMonteCarloBusy = isSimulating && activeRunMode === 'monte-carlo';
+  const [showGettingStarted, setShowGettingStarted] = useState(false);
+  const ActiveWorkspace = WORKSPACE_VIEWS[activeTab];
 
   useEffect(() => {
     const handleHash = () => {
-      const hash = window.location.hash.replace('#', '') as WorkspaceTab;
-      if (['topology', 'fmea-capacity', 'easa-compliance', 'python-engine'].includes(hash)) {
-        setActiveTab(hash);
-      }
+      const tab = workspaceTabFromHash(window.location.hash) ?? 'topology';
+      useCascadeStore.setState({ activeTab: tab });
     };
     handleHash();
     window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
+    window.addEventListener('popstate', handleHash);
+    return () => {
+      window.removeEventListener('hashchange', handleHash);
+      window.removeEventListener('popstate', handleHash);
+    };
   }, [setActiveTab]);
 
   return (
@@ -65,6 +80,8 @@ export default function App() {
           ? `Simulation error: ${backendError}`
           : isStale
           ? `Inputs modified. Editor is at Revision #${inputRevision}, displaying previous results from Revision #${simulationResult.provenance?.input_revision ?? 1}.`
+          : simulationResult.provenance?.engine !== 'fastapi-python'
+          ? 'Illustrative preview. Run Simulation to evaluate these settings with the Python engine.'
           : `Simulation complete. Engine: ${simulationResult.provenance?.engine_label}. Input Revision #${simulationResult.provenance?.input_revision ?? 1}.`}
       </div>
 
@@ -120,7 +137,7 @@ export default function App() {
           <div className="flex items-center gap-4">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">
-                Dashboard
+                AeroCascade
               </h1>
               <p className="text-xs text-gray-500 font-medium hidden sm:block">
                 AeroCascade · Remote Tower Cybersecurity &amp; Cascading Failure Simulator
@@ -129,14 +146,30 @@ export default function App() {
             <div className="hidden lg:flex items-center gap-2 rounded-full bg-gray-50 border border-gray-200/60 px-4 py-1.5 text-xs text-gray-500 shadow-inner">
               <span>AIAA 2026 Reference Model · Dhillon &amp; Moores (2001)</span>
             </div>
+            <button
+              type="button"
+              data-testid="getting-started-btn"
+              onClick={() => setShowGettingStarted(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-200/80 px-3.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100/80 transition-all shadow-xs"
+            >
+              <span>Getting started</span>
+            </button>
           </div>
+
+          <p role="status" className="text-xs text-gray-600" data-testid="workspace-save-status">
+            {workspaceSaveStatus === 'saved' ? 'Workspace saved on this device'
+              : workspaceSaveStatus === 'restored' ? 'Saved settings restored · browser preview'
+              : workspaceSaveStatus === 'unavailable' ? 'Browser storage unavailable · export your exercise before leaving'
+              : workspaceSaveStatus === 'invalid' ? 'Saved settings could not be restored · scenario defaults loaded'
+              : 'Settings save automatically on this device'}
+          </p>
 
           {/* Header Action Controls */}
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Provenance Badge */}
             <span
               data-testid="provenance-engine-badge"
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/80 px-3 py-1 text-xs font-semibold text-gray-700 shadow-xs"
+              className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/80 px-3 py-1 text-xs font-semibold text-gray-700 shadow-xs"
             >
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
               <span>
@@ -307,9 +340,38 @@ export default function App() {
                   <span className="font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
                     {kpis.capacity_retention_pct.toFixed(1)}% nominal capacity floor
                   </span>
-                  <span className="text-gray-500 font-medium">
-                    {lostCapacity} estimated lost movements
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-gray-500 font-medium">
+                      {lostCapacity} estimated lost movements
+                    </span>
+                    {lostCapacity > 0 && (
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          data-testid="kpi-disruption-cost-badge"
+                          className="font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 text-[11px]"
+                          title={`Illustrative disruption cost calculated from modeled capacity loss ($${costPerDelayedMovement.toLocaleString()}/movement assumption)`}
+                        >
+                          ≈ ${((lostCapacity * costPerDelayedMovement) / 1_000_000).toFixed(1)}M est. disruption
+                        </span>
+                        <label
+                          className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full border border-gray-200 shadow-2xs"
+                          title="Adjust illustrative cost assumption per movement to recalculate modeled disruption"
+                        >
+                          <span className="text-gray-400">$</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={500}
+                            value={costPerDelayedMovement}
+                            onChange={(e) => setCostPerDelayedMovement(Number(e.target.value))}
+                            aria-label="Cost per movement in dollars"
+                            className="w-16 rounded-full bg-white px-1.5 py-0.5 text-right text-[11px] font-bold text-gray-800 border border-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                          <span className="text-gray-400">/mvmt</span>
+                        </label>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {/* Horizontal progress bar with smooth vibrant gradient */}
                 <div className="relative h-7 w-full rounded-full bg-gray-100/80 shadow-inner overflow-hidden p-1 flex items-center">
@@ -385,12 +447,11 @@ export default function App() {
           </section>
 
           {/* Active Workspace View */}
-          <div className="transition-opacity duration-200">
-            {activeTab === 'topology' && <TopologyWorkspace />}
-            {activeTab === 'fmea-capacity' && <FMEACapacityAnalytics />}
-            {activeTab === 'easa-compliance' && <EASAComplianceView />}
-            {activeTab === 'python-engine' && <PythonBackendView />}
-          </div>
+          <WorkspaceErrorBoundary key={activeTab}>
+          <Suspense fallback={<p role="status" className="px-4 py-8 text-sm text-gray-600">Loading workspace…</p>}>
+            <ActiveWorkspace />
+          </Suspense>
+          </WorkspaceErrorBoundary>
         </main>
 
         {/* Clean Light Footer */}
@@ -405,6 +466,11 @@ export default function App() {
           </div>
         </footer>
       </div>
+
+      {showGettingStarted && (
+        <GettingStarted onClose={() => setShowGettingStarted(false)} onNavigate={setActiveTab}
+          onRun={() => executeSimulationOnServer()} onReset={() => selectScenario(activeScenarioId)} isRunning={isSimulating} />
+      )}
     </div>
   );
 }

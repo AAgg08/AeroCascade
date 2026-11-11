@@ -1,4 +1,6 @@
+import { WorkspaceTransfer } from './WorkspaceTransfer.tsx';
 import { useMemo } from 'react';
+import { Download } from 'lucide-react';
 import {
   Background,
   BackgroundVariant,
@@ -40,6 +42,8 @@ export function TopologyWorkspace() {
     executeSimulationOnServer,
     isSimulating,
     activeRunMode,
+    costPerDelayedMovement,
+    setCostPerDelayedMovement,
   } = useCascadeStore();
 
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
@@ -72,6 +76,45 @@ export function TopologyWorkspace() {
 
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     selectNode(node.id);
+  };
+
+  const handleExportTraceCSV = () => {
+    const headers = [
+      'Timestamp (Hours)',
+      'Sim Time',
+      'Cascade Stage',
+      'Node Code',
+      'Subsystem Name',
+      'Dominant Control',
+      'Event Type',
+      'Description',
+      'Capacity Impact (%)',
+      'Residual RPN',
+    ];
+
+    const rows = simulationResult.events.map((evt) => [
+      evt.timestamp_hours.toFixed(2),
+      `"${evt.formatted_time}"`,
+      `"${evt.stage}"`,
+      `"${evt.node_code}"`,
+      `"${evt.node_label.replace(/"/g, '""')}"`,
+      `"${evt.dominant_control}"`,
+      `"${(evt.event_type || '').replace(/"/g, '""')}"`,
+      `"${(evt.narrative || '').replace(/"/g, '""')}"`,
+      (-evt.capacity_impact_pct).toFixed(1),
+      evt.residual_rpn.toFixed(1),
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `aerocascade-event-trace-${activeScenarioId}-${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -149,6 +192,7 @@ export function TopologyWorkspace() {
             </div>
           </div>
         </div>
+        <WorkspaceTransfer />
       </section>
 
       {/* Main Split Console: Left/Center ReactFlow Canvas + Right Node Tripartite Inspector */}
@@ -243,6 +287,18 @@ export function TopologyWorkspace() {
                   onChange={(e) => setTriggerHour(Number(e.target.value))}
                   aria-label="Simulation trigger hour"
                   className="w-14 rounded-full border border-gray-200 bg-white px-3 py-1 text-right text-gray-900 shadow-xs focus:ring-2 focus:ring-emerald-500/20"
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                <span>Cost/Mvmt ($):</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={500}
+                  value={costPerDelayedMovement}
+                  onChange={(e) => setCostPerDelayedMovement(Number(e.target.value))}
+                  aria-label="Disruption cost multiplier per movement"
+                  className="w-20 rounded-full border border-gray-200 bg-white px-3 py-1 text-right text-gray-900 shadow-xs focus:ring-2 focus:ring-emerald-500/20"
                 />
               </label>
             </div>
@@ -567,25 +623,37 @@ export function TopologyWorkspace() {
               Chronological event trace mapping Stage 1 (Trigger) → Stage 2 (Operational Fragility) → Stage 3 (Recovery Blocker)
             </p>
           </div>
-          <div className="text-xs font-semibold text-gray-600">
-            Recovery Window: <span className="text-amber-600 font-bold">{simulationResult.summary_kpis.recovery_window_hours} hrs</span>
-            <span aria-hidden="true" className="mx-2 text-gray-300">·</span>
-            Lost Flights: <span className="text-rose-600 font-bold">{simulationResult.summary_kpis.total_disrupted_movements} mvmt</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-xs font-semibold text-gray-600">
+              Recovery Window: <span className="text-amber-600 font-bold">{simulationResult.summary_kpis.recovery_window_hours} hrs</span>
+              <span aria-hidden="true" className="mx-2 text-gray-300">·</span>
+              Modeled Lost Capacity: <span className="text-rose-600 font-bold">{simulationResult.summary_kpis.total_disrupted_movements} mvmt</span>
+            </div>
+            <button
+              type="button"
+              data-testid="export-event-trace-btn"
+              onClick={handleExportTraceCSV}
+              className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-3.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-white hover:text-gray-900 hover:border-gray-300 hover:shadow-xs transition-all shrink-0 cursor-pointer"
+              title="Download Discrete-Event Simulation Propagation Log as CSV"
+            >
+              <Download className="h-3.5 w-3.5 text-gray-500" />
+              <span>Export Event Trace (.csv)</span>
+            </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto pt-3">
+        <div className="max-h-[440px] overflow-y-auto overflow-x-auto pt-3 rounded-2xl">
           <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-gray-100 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+            <thead className="sticky top-0 bg-white/95 backdrop-blur-xs z-10 border-b border-gray-100 shadow-2xs">
+              <tr className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                 <th className="py-3 px-4">Sim Time</th>
                 <th className="py-3 px-4">Cascade Stage</th>
                 <th className="py-3 px-4">Node Code</th>
                 <th className="py-3 px-4">Subsystem / Node</th>
                 <th className="py-3 px-4">Dominant Control</th>
-                <th className="py-3 px-4">Event Narrative</th>
-                <th className="py-3 px-4 text-right">Capacity Drop</th>
-                <th className="py-3 px-4 text-right">Residual RPN</th>
+                <th className="py-3 px-4 min-w-[260px] max-w-sm">Description</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Mitigation Impact</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Residual RPN</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -606,31 +674,33 @@ export function TopologyWorkspace() {
                       isSelected ? 'bg-emerald-50/60' : 'hover:bg-gray-50/80'
                     }`}
                   >
-                    <td className="py-3 px-4 font-semibold text-gray-800 whitespace-nowrap">
+                    <td className="py-3.5 px-4 font-semibold text-gray-800 whitespace-nowrap">
                       {evt.formatted_time}
                     </td>
-                    <td className="py-3 px-4 whitespace-nowrap">
+                    <td className="py-3.5 px-4 whitespace-nowrap">
                       <span className={`inline-block px-2.5 py-0.5 rounded-full border text-[11px] font-semibold ${stageMeta.cls}`}>
                         {stageMeta.label}
                       </span>
                     </td>
-                    <td className="py-3 px-4 font-bold text-gray-700 whitespace-nowrap">
+                    <td className="py-3.5 px-4 font-bold text-gray-700 whitespace-nowrap">
                       {evt.node_code}
                     </td>
-                    <td className="py-3 px-4 font-semibold text-gray-900">
+                    <td className="py-3.5 px-4 font-semibold text-gray-900">
                       {evt.node_label}
                     </td>
-                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap font-medium">
+                    <td className="py-3.5 px-4 text-gray-600 whitespace-nowrap font-medium">
                       {evt.dominant_control}
                     </td>
-                    <td className="py-3 px-4 text-gray-600 max-w-md">
+                    <td className="py-3.5 px-4 text-gray-600 max-w-sm break-words leading-relaxed">
                       {evt.narrative}
                     </td>
-                    <td className="py-3 px-4 font-bold text-right text-rose-600 whitespace-nowrap">
-                      -{evt.capacity_impact_pct.toFixed(1)}%
+                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <span className="font-bold text-rose-600">-{evt.capacity_impact_pct.toFixed(1)}%</span>
+                      <div className="text-[10px] text-gray-400 font-medium">capacity drop</div>
                     </td>
-                    <td className="py-3 px-4 font-extrabold text-right text-gray-900 whitespace-nowrap">
-                      {evt.residual_rpn.toFixed(1)}
+                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <span className="font-extrabold text-gray-900">{evt.residual_rpn.toFixed(1)}</span>
+                      <div className="text-[10px] text-gray-400 font-medium">adjusted RPN</div>
                     </td>
                   </tr>
                 );
