@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { loadWorkspace, serializeWorkspace, WORKSPACE_STORAGE_KEY } from './workspaceSession.ts';
+import { loadWorkspace, parseWorkspace, serializeWorkspace, WORKSPACE_STORAGE_KEY, type WorkspaceSettings } from './workspaceSession.ts';
 
 let workspaceStorage: Storage | undefined;
 try {
@@ -78,7 +78,8 @@ interface CascadeState {
   costPerDelayedMovement: number;
 
   setActiveTab: (tab: WorkspaceTab) => void;
-  selectScenario: (scenarioId: string) => void;
+  selectScenario: (scenarioId: string, settings?: WorkspaceSettings) => void;
+  importWorkspace: (text: string) => boolean;
   selectNode: (nodeId: string | null) => void;
   updateNodeTripartite: (nodeId: string, partial: Partial<TripartiteControls>) => void;
   updateNodeFMEA: (nodeId: string, partial: Partial<FMEAMetrics>) => void;
@@ -148,16 +149,18 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
     set({ activeTab: tab });
   },
 
-  selectScenario: (scenarioId) => {
+  selectScenario: (scenarioId, settings) => {
     const nextRev = get().inputRevision + 1;
     const found = SCENARIO_PRESETS.find((s) => s.id === scenarioId) ?? SCENARIO_PRESETS[0];
-    const clonedNodes = structuredClone(found.nodes);
+    const clonedNodes = structuredClone(settings?.nodes ?? found.nodes);
     const clonedEdges = structuredClone(found.edges);
+    const baseline = settings?.baselineMovementsPerHour ?? found.baseline_movements_per_hour;
+    const trigger = settings?.triggerHour ?? found.trigger_hour;
     const simResult = runDiscreteEventSimulation({
       scenario_id: found.id,
       horizon_hours: found.horizon_hours,
-      baseline_movements_per_hour: found.baseline_movements_per_hour,
-      trigger_hour: found.trigger_hour,
+      baseline_movements_per_hour: baseline,
+      trigger_hour: trigger,
       nodes: clonedNodes,
       edges: clonedEdges,
       provenance: {
@@ -171,16 +174,25 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
     });
     set({
       activeScenarioId: found.id,
-      baselineMovementsPerHour: found.baseline_movements_per_hour,
-      triggerHour: found.trigger_hour,
+      baselineMovementsPerHour: baseline,
+      triggerHour: trigger,
       horizonHours: found.horizon_hours,
       nodes: clonedNodes,
       edges: clonedEdges,
       selectedNodeId: clonedNodes[0]?.id ?? null,
       simulationResult: simResult,
+      backendError: null,
+      costPerDelayedMovement: settings?.costPerDelayedMovement ?? get().costPerDelayedMovement,
       inputRevision: nextRev,
       lastSyncedAt: `Scenario Loaded (${found.id}) · Rev #${nextRev}`,
     });
+  },
+
+  importWorkspace: (text) => {
+    const settings = parseWorkspace(text);
+    if (!settings) return false;
+    get().selectScenario(settings.activeScenarioId, settings);
+    return true;
   },
 
   selectNode: (nodeId) => set({ selectedNodeId: nodeId }),

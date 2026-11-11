@@ -1,3 +1,4 @@
+import { WorkspaceTransfer } from './WorkspaceTransfer.tsx';
 import { useMemo } from 'react';
 import { Download } from 'lucide-react';
 import {
@@ -191,6 +192,7 @@ export function TopologyWorkspace() {
             </div>
           </div>
         </div>
+        <WorkspaceTransfer />
       </section>
 
       {/* Main Split Console: Left/Center ReactFlow Canvas + Right Node Tripartite Inspector */}
