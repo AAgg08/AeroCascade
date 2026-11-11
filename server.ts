@@ -32,6 +32,12 @@ async function startServer() {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         headers['Content-Type'] = 'application/json';
       }
+      if (req.headers['authorization']) {
+        headers['Authorization'] = String(req.headers['authorization']);
+      }
+      if (req.headers['x-aerocascade-role']) {
+        headers['X-AeroCascade-Role'] = String(req.headers['x-aerocascade-role']);
+      }
 
       // If payload is missing nodes or edges for simulation/centrality, populate from scenario preset
       let requestPayload = req.body;
@@ -75,7 +81,14 @@ async function startServer() {
         const errJson = await response.json().catch(() => null);
         const errDetail = errJson?.detail || (await response.text().catch(() => ''));
         console.warn(`[Proxy] Python backend returned ${response.status} for ${req.originalUrl}. Detail: ${String(errDetail).slice(0, 160)}`);
-        if (response.status === 400 || response.status === 404 || response.status === 409 || response.status === 422) {
+        if (
+          response.status === 400 ||
+          response.status === 401 ||
+          response.status === 403 ||
+          response.status === 404 ||
+          response.status === 409 ||
+          response.status === 422
+        ) {
           return res.status(response.status).json(errJson || { error: errDetail, detail: errDetail });
         }
         await fallback(`Python backend error HTTP ${response.status}: ${errDetail}`);
@@ -218,7 +231,21 @@ async function startServer() {
     });
   });
 
+  app.all(['/api/review*', '/api/dossier*', '/api/export*', '/api/admin*'], async (req, res) => {
+    await proxyToPythonBackend(req, res, (reason) => {
+      res.status(503).json({
+        error: 'Backend governance service offline',
+        detail: reason,
+      });
+    });
+  });
+
   app.get('/api/backend-source', (_req, res) => {
+    if (process.env.ENTERPRISE_MODE === 'true' || process.env.NODE_ENV === 'production') {
+      return res.status(403).json({
+        error: 'Backend source viewer is disabled in the enterprise profile.',
+      });
+    }
     try {
       const backendDir = path.resolve(process.cwd(), 'backend');
       const files = ['main.py', 'models.py', 'graph_engine.py', 'simpy_engine.py', 'requirements.txt'];

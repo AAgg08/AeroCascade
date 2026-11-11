@@ -1,0 +1,88 @@
+version: '3.8'
+
+# AeroCascade Air-Gapped Enterprise Deployment
+# Architecture:
+# - Loopback-only ingress (127.0.0.1:3000) for local access or reverse proxy termination
+# - FastAPI backend kept private (unexposed outside internal bridge network)
+# - Container hardening: read-only rootfs, dropped capabilities, no-new-privileges, unprivileged UID 10001
+# - Zero remote dependencies: pull_policy: never, internal: true network isolation
+# - Customer-managed encrypted persistent storage mounts for SQLite database and backups
+
+services:
+  gateway:
+    image: aerocascade-gateway:2.0.0
+    container_name: aerocascade-gateway
+    pull_policy: never
+    restart: unless-stopped
+    read_only: true
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - ENTERPRISE_MODE=true
+      - PORT=3000
+      - PYTHON_BACKEND_URL=http://backend:8000
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    networks:
+      - aerocascade-internal
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  backend:
+    image: aerocascade-backend:2.0.0
+    container_name: aerocascade-backend
+    pull_policy: never
+    restart: unless-stopped
+    read_only: true
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    expose:
+      - "8000"
+    environment:
+      - ENTERPRISE_MODE=true
+      - AEROCASCADE_DB_PATH=/var/lib/aerocascade/data/aerocascade.db
+      - AEROCASCADE_BACKUP_DIR=/var/lib/aerocascade/backups
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - aerocascade-data:/var/lib/aerocascade/data:rw
+      - aerocascade-backups:/var/lib/aerocascade/backups:rw
+    networks:
+      - aerocascade-internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  aerocascade-internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  aerocascade-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${ENCRYPTED_DATA_PATH:-./data}
+  aerocascade-backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${ENCRYPTED_BACKUP_PATH:-./backups}

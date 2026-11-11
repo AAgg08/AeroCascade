@@ -1,0 +1,381 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:781942ca-ec8a-48a4-8d6e-1d5bd76bda75",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-11T23:46:21Z",
+    "tools": [
+      {
+        "vendor": "AeroCascade Security Engineering",
+        "name": "AeroCascade SBOM Generator",
+        "version": "2.0.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "AeroCascade",
+      "version": "2.0.0",
+      "description": "Enterprise Air-Gapped Remote Tower Cascading Failure Simulation & EASA Part-IS Risk Platform",
+      "licenses": [
+        {
+          "license": {
+            "id": "Proprietary"
+          }
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "container",
+      "name": "node-alpine",
+      "version": "22-alpine",
+      "purl": "pkg:docker/library/node@22-alpine",
+      "description": "Hardened unprivileged Alpine Linux Node runtime container base",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "container",
+      "name": "python-slim",
+      "version": "3.12-slim",
+      "purl": "pkg:docker/library/python@3.12-slim",
+      "description": "Hardened unprivileged Debian Bookworm Python runtime container base",
+      "licenses": [
+        {
+          "license": {
+            "id": "PSF-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fastapi",
+      "version": "0.115.0",
+      "purl": "pkg:pypi/fastapi@0.115.0",
+      "description": "FastAPI framework",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "uvicorn",
+      "version": "0.32.0",
+      "purl": "pkg:pypi/uvicorn@0.32.0",
+      "description": "ASGI server",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pydantic",
+      "version": "2.14.1",
+      "purl": "pkg:pypi/pydantic@2.14.1",
+      "description": "Data validation using Python type hints",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "networkx",
+      "version": "3.4.2",
+      "purl": "pkg:pypi/networkx@3.4.2",
+      "description": "Network analysis in Python",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "simpy",
+      "version": "4.1.2",
+      "purl": "pkg:pypi/simpy@4.1.2",
+      "description": "Discrete event simulation framework",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "numpy",
+      "version": "2.1.2",
+      "purl": "pkg:pypi/numpy@2.1.2",
+      "description": "Fundamental package for scientific computing",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "openpyxl",
+      "version": "3.1.5",
+      "purl": "pkg:pypi/openpyxl@3.1.5",
+      "description": "Excel 2010 xlsx/xlsm reader/writer",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "python-multipart",
+      "version": "0.0.33",
+      "purl": "pkg:pypi/python-multipart@0.0.33",
+      "description": "Streaming multipart parser for Python",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httpx",
+      "version": "0.28.1",
+      "purl": "pkg:pypi/httpx@0.28.1",
+      "description": "Next-generation HTTP client for Python",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "react",
+      "version": "19.0.1",
+      "purl": "pkg:npm/react@19.0.1",
+      "description": "React library for UI",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "react-dom",
+      "version": "19.0.1",
+      "purl": "pkg:npm/react-dom@19.0.1",
+      "description": "React package for working with the DOM",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zustand",
+      "version": "5.0.15",
+      "purl": "pkg:npm/zustand@5.0.15",
+      "description": "Bear necessities state management in React",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "express",
+      "version": "4.21.2",
+      "purl": "pkg:npm/express@4.21.2",
+      "description": "Fast, unopinionated, minimalist web framework",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@dagrejs/dagre",
+      "version": "3.1.1",
+      "purl": "pkg:npm/@dagrejs/dagre@3.1.1",
+      "description": "Directed graph layout library",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@xyflow/react",
+      "version": "12.12.0",
+      "purl": "pkg:npm/@xyflow/react@12.12.0",
+      "description": "Node-based UIs and workflow editors",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lucide-react",
+      "version": "0.546.0",
+      "purl": "pkg:npm/lucide-react@0.546.0",
+      "description": "Lucide icon set for React",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "motion",
+      "version": "12.23.24",
+      "purl": "pkg:npm/motion@12.23.24",
+      "description": "Animation library for React",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "recharts",
+      "version": "3.10.1",
+      "purl": "pkg:npm/recharts@3.10.1",
+      "description": "Redefined chart library built with React and D3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "react-to-print",
+      "version": "3.3.0",
+      "purl": "pkg:npm/react-to-print@3.3.0",
+      "description": "Print React components in browser",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "vite",
+      "version": "8.3.5",
+      "purl": "pkg:npm/vite@8.3.5",
+      "description": "Next Generation Frontend Tooling",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tailwindcss",
+      "version": "4.3.3",
+      "purl": "pkg:npm/tailwindcss@4.3.3",
+      "description": "A utility-first CSS framework",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typescript",
+      "version": "7.0.2",
+      "purl": "pkg:npm/typescript@7.0.2",
+      "description": "TypeScript language support",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "dotenv",
+      "version": "17.2.3",
+      "purl": "pkg:npm/dotenv@17.2.3",
+      "description": "Loads environment variables from .env",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ]
+    }
+  ]
+}

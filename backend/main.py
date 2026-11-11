@@ -11,8 +11,9 @@ Exposes authoritative REST API endpoints for:
 
 from __future__ import annotations
 import json
+import os
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Query, status, Request, Response, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, status, Request, Response, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import networkx as nx
@@ -23,6 +24,12 @@ from .canonical import (
 )
 from .graph_engine import build_dependency_graph
 from .models import SimulationRequest, SimulationResponse
+from .security import (
+    Action,
+    Role,
+    is_enterprise_mode,
+    require_role,
+)
 from .importer import (
     ImportPreviewResponse,
     SaveImportRequest,
@@ -95,7 +102,10 @@ def health_check() -> dict:
 
 
 @app.post("/api/simulate", response_model=SimulationResponse)
-def simulate_cascade(payload: SimulationRequest) -> SimulationResponse:
+def simulate_cascade(
+    payload: SimulationRequest,
+    _role: Role = Depends(require_role(Action.RUN)),
+) -> SimulationResponse:
     try:
         res = run_cascade_simulation(payload)
         # If payload specifies a known topology_id, attempt to record the run against that version
@@ -144,7 +154,10 @@ def list_topologies() -> dict:
 
 
 @app.post("/api/topologies", status_code=status.HTTP_201_CREATED)
-def create_topology(body: CreateTopologyPayload) -> dict:
+def create_topology(
+    body: CreateTopologyPayload,
+    _role: Role = Depends(require_role(Action.IMPORT)),
+) -> dict:
     try:
         return repo.create_topology(
             name=body.name,
@@ -172,7 +185,11 @@ def get_topology_version(topology_id: str, version_num: int) -> dict:
 
 
 @app.post("/api/topologies/{topology_id}/versions")
-def save_new_version(topology_id: str, body: SaveVersionPayload) -> dict:
+def save_new_version(
+    topology_id: str,
+    body: SaveVersionPayload,
+    _role: Role = Depends(require_role(Action.SAVE_VERSION)),
+) -> dict:
     try:
         return repo.save_new_version(
             topology_id=topology_id,
@@ -189,7 +206,11 @@ def save_new_version(topology_id: str, body: SaveVersionPayload) -> dict:
 
 
 @app.post("/api/topologies/{topology_id}/clone", status_code=status.HTTP_201_CREATED)
-def clone_topology(topology_id: str, body: CloneTopologyPayload) -> dict:
+def clone_topology(
+    topology_id: str,
+    body: CloneTopologyPayload,
+    _role: Role = Depends(require_role(Action.CLONE)),
+) -> dict:
     try:
         return repo.clone_topology(
             source_topology_id=topology_id,
@@ -228,6 +249,7 @@ def get_run(run_id: str) -> dict:
 async def preview_topology_import(
     request: Request,
     file: Optional[UploadFile] = File(None),
+    _role: Role = Depends(require_role(Action.IMPORT)),
 ) -> ImportPreviewResponse:
     content_type = request.headers.get("content-type", "")
     file_bytes: bytes = b""
@@ -259,7 +281,10 @@ async def preview_topology_import(
 
 
 @app.post("/api/import/save", status_code=status.HTTP_201_CREATED)
-def save_imported_topology(body: SaveImportRequest) -> dict:
+def save_imported_topology(
+    body: SaveImportRequest,
+    _role: Role = Depends(require_role(Action.IMPORT)),
+) -> dict:
     # 1. Verify cycles confirmation if cycles exist
     g = nx.DiGraph()
     for n in body.canonical.nodes:
@@ -307,3 +332,120 @@ def download_import_template(template_name: str) -> Response:
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ==============================================================================
+# Enterprise Governance, Review & Approvals
+# ==============================================================================
+
+class ReviewCommentPayload(BaseModel):
+    topology_id: str
+    comment: str
+    reviewer_name: Optional[str] = "Reviewer"
+
+
+class DossierApprovalPayload(BaseModel):
+    topology_id: str
+    topology_version: int
+    signoff_notes: str
+    approver_name: Optional[str] = "Designated Authority"
+
+
+@app.post("/api/review/comments")
+def add_review_comment(
+    body: ReviewCommentPayload,
+    _role: Role = Depends(require_role(Action.REVIEW)),
+) -> dict:
+    return {
+        "status": "recorded",
+        "topology_id": body.topology_id,
+        "role": _role.value,
+        "comment": body.comment,
+        "reviewer_name": body.reviewer_name,
+    }
+
+
+@app.post("/api/dossier/approve")
+def approve_dossier(
+    body: DossierApprovalPayload,
+    _role: Role = Depends(require_role(Action.APPROVE)),
+) -> dict:
+    return {
+        "status": "approved",
+        "topology_id": body.topology_id,
+        "topology_version": body.topology_version,
+        "approved_by_role": _role.value,
+        "approver_name": body.approver_name,
+        "signoff_notes": body.signoff_notes,
+    }
+
+
+@app.get("/api/export/dossier")
+def export_dossier(
+    topology_id: str,
+    topology_version: Optional[int] = None,
+    _role: Role = Depends(require_role(Action.EXPORT)),
+) -> dict:
+    topo = repo.get_topology(topology_id)
+    if not topo:
+        raise HTTPException(status_code=404, detail="Topology not found")
+    return {
+        "export_status": "success",
+        "topology_id": topology_id,
+        "topology_name": topo["name"],
+        "version": topology_version or topo["current_version"],
+        "exported_by_role": _role.value,
+    }
+
+
+@app.get("/api/backend-source")
+def get_backend_source():
+    if is_enterprise_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Backend source viewer is disabled in the enterprise profile.",
+        )
+    return {"status": "enabled", "profile": "development"}
+
+
+class RestorePayload(BaseModel):
+    backup_path: str
+
+
+@app.post("/api/admin/backup")
+def trigger_backup(
+    _role: Role = Depends(require_role(Action.MANAGE)),
+) -> dict:
+    import time
+    backup_dir = os.environ.get("AEROCASCADE_BACKUP_DIR", "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    filename = f"aerocascade_backup_{int(time.time())}.db"
+    dest_path = os.path.join(backup_dir, filename)
+    repo.backup_database(dest_path)
+    size_bytes = os.path.getsize(dest_path) if os.path.exists(dest_path) else 0
+    return {
+        "status": "success",
+        "backup_file": filename,
+        "backup_path": dest_path,
+        "size_bytes": size_bytes,
+    }
+
+
+@app.post("/api/admin/restore")
+def trigger_restore(
+    body: RestorePayload,
+    _role: Role = Depends(require_role(Action.MANAGE)),
+) -> dict:
+    target_path = body.backup_path
+    if not os.path.isabs(target_path):
+        backup_dir = os.environ.get("AEROCASCADE_BACKUP_DIR", "backups")
+        target_path = os.path.join(backup_dir, target_path)
+
+    if not os.path.exists(target_path):
+        raise HTTPException(status_code=404, detail=f"Backup file '{body.backup_path}' not found")
+
+    repo.restore_database(target_path)
+    return {
+        "status": "success",
+        "restored_from": target_path,
+    }
