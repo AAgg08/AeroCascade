@@ -37,6 +37,24 @@ export function workspaceTabFromHash(hash: string): WorkspaceTab | undefined {
   }
 }
 
+function simulationErrorMessage(payload: unknown, status: number): string {
+  if (payload && typeof payload === 'object') {
+    const { error, detail } = payload as Record<string, unknown>;
+    for (const value of [error, detail]) {
+      if (typeof value === 'string' && value.trim()) return value;
+      if (Array.isArray(value)) {
+        const messages = value.slice(0, 3).flatMap((item) => {
+          if (!item || typeof item.msg !== 'string') return [];
+          const field = Array.isArray(item.loc) ? item.loc.filter((part: unknown) => part !== 'body').join('.') : '';
+          return field ? [`${field}: ${item.msg}`] : [item.msg];
+        });
+        if (messages.length > 0) return `Check the simulation inputs. ${messages.join(' ')}`;
+      }
+    }
+  }
+  return `Simulation request failed (HTTP ${status}). Please try again.`;
+}
+
 interface CascadeState {
   workspaceSaveStatus: 'none' | 'saved' | 'restored' | 'invalid' | 'unavailable';
   activeTab: WorkspaceTab;
@@ -322,6 +340,7 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       const url = opts?.allowLegacyDemo ? '/api/simulate?allow_legacy_demo=true' : '/api/simulate';
       const response = await fetch(url, {
         method: 'POST',
+        signal: AbortSignal.timeout(25_000),
         headers: {
           'Content-Type': 'application/json',
           ...(opts?.allowLegacyDemo ? { 'x-allow-legacy-demo': 'true' } : {}),
@@ -341,13 +360,21 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => null);
-        errorMessage = errJson?.error || errJson?.detail || `Simulation server returned HTTP ${response.status}`;
+        errorMessage = simulationErrorMessage(errJson, response.status);
       } else {
-        responseData = await response.json();
+        const data: SimulationResponse | null = await response.json();
+        if (!data?.summary_kpis || !data.easa_notification || !data.provenance
+          || !Array.isArray(data.hourly_capacity) || !Array.isArray(data.events) || !Array.isArray(data.node_analytics)) {
+          errorMessage = 'The simulation returned incomplete results. Please try again.';
+        } else {
+          responseData = data;
+        }
       }
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err);
-      errorMessage = `Failed to connect to simulation backend: ${errMessage}`;
+      errorMessage = err instanceof Error && err.name === 'TimeoutError'
+        ? 'The simulation took too long to respond. Please try again.'
+        : `Failed to connect to simulation backend: ${errMessage}`;
     }
 
     // Decrement counter exactly once per dispatch using current state after body parsing settles:
