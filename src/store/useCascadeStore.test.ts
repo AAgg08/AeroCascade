@@ -571,7 +571,9 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
 
   await t.test('Dagre layout spacing: columns expanded (+40px) and vertical nodes spaced (+25px)', async () => {
     const scenario = SCENARIO_PRESETS[0];
-    const centralityMap = computeGraphCentrality(scenario.nodes, scenario.edges);
+    const centralityMap = Object.fromEntries(
+      computeGraphCentrality(scenario.nodes, scenario.edges).map((metric) => [metric.node_id, metric]),
+    );
     const { flowNodes, flowEdges } = buildDagreCascadeLayout(scenario.nodes, scenario.edges, centralityMap, null);
 
     // Find Stage 1, Stage 2, and Stage 3 nodes
