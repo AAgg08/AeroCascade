@@ -11,6 +11,11 @@ const savedWorkspace = loadWorkspace(workspaceStorage);
 import { SCENARIO_PRESETS } from '../domain/scenarios.ts';
 import { runDiscreteEventSimulation } from '../domain/simulationEngine.ts';
 import {
+  presetToCanonicalTopology,
+  canonicalTopologyToSimulationInput,
+  type CanonicalTopology,
+} from '../domain/canonical.ts';
+import {
   type DependencyEdgeModel,
   type FMEAMetrics,
   type PSOELevel,
@@ -19,6 +24,17 @@ import {
   type SystemNodeModel,
   type TripartiteControls,
 } from '../domain/types.ts';
+
+export interface TopologySummary {
+  id: string;
+  name: string;
+  description: string;
+  current_version: number;
+  updated_at: string;
+  created_at: string;
+  cloned_from_id?: string | null;
+  cloned_from_version?: number | null;
+}
 
 export type WorkspaceTab =
   | 'topology'
@@ -76,6 +92,13 @@ interface CascadeState {
   pendingRequestsCount: number;
   backendError: string | null;
   costPerDelayedMovement: number;
+  topologies: TopologySummary[];
+  currentTopologyId: string | null;
+  currentTopologyVersion: number | null;
+  isTopologyModalOpen: boolean;
+  topologyLoading: boolean;
+  topologyConflictError: string | null;
+  topologySuccessMessage: string | null;
 
   setActiveTab: (tab: WorkspaceTab) => void;
   selectScenario: (scenarioId: string, settings?: WorkspaceSettings) => void;
@@ -90,6 +113,13 @@ interface CascadeState {
   setCostPerDelayedMovement: (cost: number) => void;
   executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean; replicates?: number }) => Promise<void>;
   clearBackendError: () => void;
+  setTopologyModalOpen: (open: boolean) => void;
+  fetchTopologies: () => Promise<void>;
+  openTopology: (id: string, version?: number) => Promise<boolean>;
+  saveNewTopologyVersion: (changeSummary: string) => Promise<boolean>;
+  cloneTopology: (newName: string, topologyId?: string) => Promise<boolean>;
+  clearTopologyConflictError: () => void;
+  clearTopologySuccessMessage: () => void;
 }
 
 const initialScenario = SCENARIO_PRESETS.find((s) => s.id === savedWorkspace.settings?.activeScenarioId) ?? SCENARIO_PRESETS[0];
@@ -136,6 +166,17 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   pendingRequestsCount: 0,
   backendError: null,
   costPerDelayedMovement: savedWorkspace.settings?.costPerDelayedMovement ?? 7500,
+  topologies: [],
+  currentTopologyId: initialScenario.id,
+  currentTopologyVersion: 1,
+  isTopologyModalOpen: false,
+  topologyLoading: false,
+  topologyConflictError: null,
+  topologySuccessMessage: null,
+
+  setTopologyModalOpen: (open: boolean) => set({ isTopologyModalOpen: open }),
+  clearTopologyConflictError: () => set({ topologyConflictError: null }),
+  clearTopologySuccessMessage: () => set({ topologySuccessMessage: null }),
 
   clearBackendError: () => set({ backendError: null }),
 
@@ -174,6 +215,8 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
     });
     set({
       activeScenarioId: found.id,
+      currentTopologyId: found.id,
+      currentTopologyVersion: 1,
       baselineMovementsPerHour: baseline,
       triggerHour: trigger,
       horizonHours: found.horizon_hours,
@@ -429,6 +472,198 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
         backendError: null,
         lastSyncedAt: `${engineLabel}${repTag} (Rev #${requestRevision}) at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
       });
+    }
+  },
+
+  fetchTopologies: async () => {
+    set({ topologyLoading: true });
+    try {
+      const res = await fetch('/api/topologies');
+      if (res.ok) {
+        const data = await res.json();
+        set({ topologies: data.topologies || [], topologyLoading: false });
+      } else {
+        set({ topologyLoading: false });
+      }
+    } catch {
+      set({ topologyLoading: false });
+    }
+  },
+
+  openTopology: async (id: string, version?: number) => {
+    set({ topologyLoading: true, topologyConflictError: null });
+    try {
+      const url = version != null
+        ? `/api/topologies/${encodeURIComponent(id)}/versions/${version}`
+        : `/api/topologies/${encodeURIComponent(id)}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Failed to load topology' }));
+        set({ topologyConflictError: err.detail || 'Could not load topology', topologyLoading: false });
+        return false;
+      }
+      const data = await res.json();
+      const canonical: CanonicalTopology = data.current_version_data ?? data;
+      const simInput = canonicalTopologyToSimulationInput(canonical);
+
+      const nextRev = get().inputRevision + 1;
+      const simResult = runDiscreteEventSimulation({
+        ...simInput,
+        provenance: {
+          engine: 'browser-typescript',
+          engine_label: 'In-Browser Client (TypeScript Engine)',
+          model_version: '1.0.0-illustrative',
+          input_revision: nextRev,
+          generated_at: new Date().toISOString(),
+          is_fallback: false,
+        },
+      });
+
+      set({
+        activeScenarioId: canonical.topology_id,
+        currentTopologyId: canonical.topology_id,
+        currentTopologyVersion: canonical.version,
+        baselineMovementsPerHour: canonical.baseline_movements_per_hour,
+        triggerHour: canonical.trigger_hour,
+        horizonHours: canonical.horizon_hours,
+        costPerDelayedMovement: canonical.cost_per_delayed_movement || 7500,
+        nodes: simInput.nodes,
+        edges: simInput.edges,
+        selectedNodeId: simInput.nodes[0]?.id ?? null,
+        simulationResult: simResult,
+        inputRevision: nextRev,
+        lastSyncedAt: `Topology Loaded (${canonical.name} v${canonical.version}) · Rev #${nextRev}`,
+        topologyLoading: false,
+        topologySuccessMessage: `Opened ${canonical.name} (v${canonical.version})`,
+      });
+      return true;
+    } catch (e) {
+      set({
+        topologyLoading: false,
+        topologyConflictError: e instanceof Error ? e.message : 'Failed to open topology',
+      });
+      return false;
+    }
+  },
+
+  saveNewTopologyVersion: async (changeSummary: string) => {
+    const state = get();
+    const topologyId = state.currentTopologyId || state.activeScenarioId;
+    const currentVersion = state.currentTopologyVersion || 1;
+    set({ topologyLoading: true, topologyConflictError: null, topologySuccessMessage: null });
+
+    const currentPreset = state.scenarios.find((s) => s.id === state.activeScenarioId) ?? state.scenarios[0];
+    const baseCanonical = presetToCanonicalTopology(currentPreset);
+    const canonical: CanonicalTopology = {
+      ...baseCanonical,
+      topology_id: topologyId,
+      name: currentPreset.title,
+      version: currentVersion + 1,
+      baseline_movements_per_hour: state.baselineMovementsPerHour,
+      trigger_hour: state.triggerHour,
+      horizon_hours: state.horizonHours,
+      cost_per_delayed_movement: state.costPerDelayedMovement,
+      nodes: state.nodes.map((n) => ({ ...n })),
+      dependencies: state.edges.map((e) => ({
+        id: e.id,
+        provider_node_id: e.source,
+        dependent_node_id: e.target,
+        coupling_weight: e.coupling_weight,
+        propagation_mechanism: e.propagation_mechanism,
+        protocol_layer: e.protocol_layer || 'IP/Ethernet',
+        propagation_delay_hours: e.propagation_delay_hours ?? 0.25,
+        dependency_type: e.dependency_type ?? 'REQUIRED',
+        distance_weight: e.distance_weight ?? 1.0,
+      })),
+    };
+
+    try {
+      const res = await fetch(`/api/topologies/${encodeURIComponent(topologyId)}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          canonical,
+          change_summary: changeSummary || `Version update to v${currentVersion + 1}`,
+          expected_version: currentVersion,
+        }),
+      });
+
+      if (res.status === 409) {
+        const err = await res.json().catch(() => ({ detail: 'Stale version conflict' }));
+        set({
+          topologyConflictError: `Conflict (HTTP 409): ${err.detail || 'Stale version detected. Another user or session has already updated this topology. Please reload before saving.'}`,
+          topologyLoading: false,
+        });
+        return false;
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Save failed' }));
+        set({
+          topologyConflictError: err.detail || `Save failed with status ${res.status}`,
+          topologyLoading: false,
+        });
+        return false;
+      }
+
+      const saved = await res.json();
+      const newVersion = saved.version ?? currentVersion + 1;
+      set({
+        currentTopologyId: topologyId,
+        currentTopologyVersion: newVersion,
+        topologyLoading: false,
+        topologySuccessMessage: `Saved version v${newVersion} successfully: "${changeSummary}"`,
+      });
+      await get().fetchTopologies();
+      return true;
+    } catch (e) {
+      set({
+        topologyLoading: false,
+        topologyConflictError: e instanceof Error ? e.message : 'Save request failed',
+      });
+      return false;
+    }
+  },
+
+  cloneTopology: async (newName: string, topologyId?: string) => {
+    const state = get();
+    const targetId = topologyId || state.currentTopologyId || state.activeScenarioId;
+    const currentVersion = state.currentTopologyVersion || 1;
+    set({ topologyLoading: true, topologyConflictError: null, topologySuccessMessage: null });
+
+    try {
+      const res = await fetch(`/api/topologies/${encodeURIComponent(targetId)}/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          new_name: newName,
+          version: currentVersion,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Clone failed' }));
+        set({
+          topologyConflictError: err.detail || `Clone failed with status ${res.status}`,
+          topologyLoading: false,
+        });
+        return false;
+      }
+
+      const cloned = await res.json();
+      set({
+        topologyLoading: false,
+        topologySuccessMessage: `Successfully cloned "${cloned.summary.name}" (ID: ${cloned.summary.id}, origin: ${cloned.summary.cloned_from_id} v${cloned.summary.cloned_from_version})`,
+      });
+      await get().fetchTopologies();
+      await get().openTopology(cloned.summary.id, 1);
+      return true;
+    } catch (e) {
+      set({
+        topologyLoading: false,
+        topologyConflictError: e instanceof Error ? e.message : 'Clone request failed',
+      });
+      return false;
     }
   },
 }));

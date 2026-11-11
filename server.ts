@@ -61,8 +61,8 @@ async function startServer() {
         const errJson = await response.json().catch(() => null);
         const errDetail = errJson?.detail || (await response.text().catch(() => ''));
         console.warn(`[Proxy] Python backend returned ${response.status} for ${req.originalUrl}. Detail: ${String(errDetail).slice(0, 160)}`);
-        if (response.status === 400 || response.status === 422) {
-          return res.status(response.status).json({ error: errDetail });
+        if (response.status === 400 || response.status === 404 || response.status === 409 || response.status === 422) {
+          return res.status(response.status).json(errJson || { error: errDetail, detail: errDetail });
         }
         await fallback(`Python backend error HTTP ${response.status}: ${errDetail}`);
       }
@@ -173,6 +173,25 @@ async function startServer() {
           error: err instanceof Error ? err.message : 'Topology analysis failed',
         });
       }
+    });
+  });
+
+  app.all('/api/topologies*', async (req, res) => {
+    await proxyToPythonBackend(req, res, (reason) => {
+      res.status(503).json({
+        error: 'Topology repository offline',
+        detail: reason,
+        hint: 'Start the Python backend with: python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000',
+      });
+    });
+  });
+
+  app.all('/api/runs*', async (req, res) => {
+    await proxyToPythonBackend(req, res, (reason) => {
+      res.status(503).json({
+        error: 'Simulation runs repository offline',
+        detail: reason,
+      });
     });
   });
 

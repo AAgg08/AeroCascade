@@ -667,4 +667,182 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(firstEdge.labelBgStyle?.fill, '#FFFFFF', 'Edge label background must be white');
     assert.equal(firstEdge.labelBgBorderRadius, 6, 'Edge label background must have 6px border radius');
   });
+
+  await t.test('Topology Repository & Versioning Suite', async () => {
+    // 1. fetchTopologies
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/topologies')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            topologies: [
+              {
+                id: 'rtc-optical-asmgcs-spoof',
+                name: 'Remote Tower Optical ASMGCS Spoof',
+                description: 'Test description',
+                current_version: 1,
+                updated_at: new Date().toISOString(),
+                created_at: new Date().toISOString(),
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+
+    await useCascadeStore.getState().fetchTopologies();
+    assert.equal(useCascadeStore.getState().topologies.length, 1);
+    assert.equal(useCascadeStore.getState().topologies[0].id, 'rtc-optical-asmgcs-spoof');
+
+    // 2. saveNewTopologyVersion - success
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/versions') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        assert.equal(body.expected_version, 1);
+        assert.equal(body.change_summary, 'Updated failover configuration');
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            version: 2,
+            change_summary: body.change_summary,
+            created_at: new Date().toISOString(),
+          }),
+        } as Response;
+      }
+      if (urlStr.includes('/api/topologies')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ topologies: [] }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+
+    const saveOk = await useCascadeStore.getState().saveNewTopologyVersion('Updated failover configuration');
+    assert.equal(saveOk, true);
+    assert.equal(useCascadeStore.getState().currentTopologyVersion, 2);
+    assert.ok(useCascadeStore.getState().topologySuccessMessage?.includes('v2'));
+
+    // 3. saveNewTopologyVersion - optimistic lock stale write conflict (HTTP 409)
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/versions') && init?.method === 'POST') {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({
+            detail: 'Stale version conflict: expected version 2 but repository is at version 3.',
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+
+    const staleSaveOk = await useCascadeStore.getState().saveNewTopologyVersion('Conflicting change');
+    assert.equal(staleSaveOk, false);
+    assert.ok(
+      useCascadeStore.getState().topologyConflictError?.includes('Conflict (HTTP 409)'),
+      'Conflict error must clearly report optimistic locking rejection'
+    );
+
+    // 4. cloneTopology
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/clone') && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            summary: {
+              id: 'topo-clone-999',
+              name: 'Cloned Scenario Test',
+              description: 'Cloned test',
+              current_version: 1,
+              updated_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              cloned_from_id: 'rtc-optical-asmgcs-spoof',
+              cloned_from_version: 2,
+            },
+            canonical: {
+              schema_version: '1.0.0',
+              topology_id: 'topo-clone-999',
+              name: 'Cloned Scenario Test',
+              description: 'Cloned test',
+              version: 1,
+              aerodrome_profile: 'EHAM',
+              baseline_movements_per_hour: 48,
+              trigger_hour: 4,
+              horizon_hours: 24,
+              cost_per_delayed_movement: 7500,
+              source_provenance: {
+                author: 'Test',
+                citation: 'Test',
+                source_document: 'Test',
+                synthetic_fixture: true,
+                origin_scenario_id: 'rtc-optical-asmgcs-spoof',
+                cloned_from_id: 'rtc-optical-asmgcs-spoof',
+                cloned_from_version: 2,
+                created_at: new Date().toISOString(),
+              },
+              nodes: structuredClone(SCENARIO_PRESETS[0].nodes),
+              dependencies: SCENARIO_PRESETS[0].edges.map((e) => ({
+                id: e.id,
+                provider_node_id: e.source,
+                dependent_node_id: e.target,
+                coupling_weight: e.coupling_weight,
+                propagation_mechanism: e.propagation_mechanism,
+                protocol_layer: 'IP/Ethernet',
+              })),
+            },
+          }),
+        } as Response;
+      }
+      if (urlStr.includes('/api/topologies/topo-clone-999')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            schema_version: '1.0.0',
+            topology_id: 'topo-clone-999',
+            name: 'Cloned Scenario Test',
+            description: 'Cloned test',
+            version: 1,
+            aerodrome_profile: 'EHAM',
+            baseline_movements_per_hour: 48,
+            trigger_hour: 4,
+            horizon_hours: 24,
+            cost_per_delayed_movement: 7500,
+            nodes: structuredClone(SCENARIO_PRESETS[0].nodes),
+            dependencies: SCENARIO_PRESETS[0].edges.map((e) => ({
+              id: e.id,
+              provider_node_id: e.source,
+              dependent_node_id: e.target,
+              coupling_weight: e.coupling_weight,
+              propagation_mechanism: e.propagation_mechanism,
+              protocol_layer: 'IP/Ethernet',
+            })),
+          }),
+        } as Response;
+      }
+      if (urlStr.includes('/api/topologies')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ topologies: [] }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+
+    const cloneOk = await useCascadeStore.getState().cloneTopology('Cloned Scenario Test');
+    assert.equal(cloneOk, true);
+    assert.equal(useCascadeStore.getState().currentTopologyId, 'topo-clone-999');
+    assert.equal(useCascadeStore.getState().currentTopologyVersion, 1);
+  });
 });

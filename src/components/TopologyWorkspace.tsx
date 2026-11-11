@@ -1,6 +1,7 @@
 import { WorkspaceTransfer } from './WorkspaceTransfer.tsx';
+import { TopologyRepositoryModal } from './TopologyRepositoryModal.tsx';
 import { useMemo } from 'react';
-import { Download } from 'lucide-react';
+import { Download, GitBranch } from 'lucide-react';
 import {
   Background,
   BackgroundVariant,
@@ -44,6 +45,8 @@ export function TopologyWorkspace() {
     activeRunMode,
     costPerDelayedMovement,
     setCostPerDelayedMovement,
+    setTopologyModalOpen,
+    currentTopologyVersion,
   } = useCascadeStore();
 
   const isDeterministicBusy = isSimulating && activeRunMode === 'deterministic';
@@ -192,7 +195,17 @@ export function TopologyWorkspace() {
             </div>
           </div>
         </div>
-        <WorkspaceTransfer />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTopologyModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50/70 px-3.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition-colors"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            <span>Repository Versions ({currentTopologyVersion ? `v${currentTopologyVersion}` : 'v1'})</span>
+          </button>
+          <WorkspaceTransfer />
+        </div>
       </section>
 
       {/* Main Split Console: Left/Center ReactFlow Canvas + Right Node Tripartite Inspector */}
@@ -709,6 +722,8 @@ export function TopologyWorkspace() {
           </table>
         </div>
       </section>
+
+      <TopologyRepositoryModal />
     </div>
   );
 }
