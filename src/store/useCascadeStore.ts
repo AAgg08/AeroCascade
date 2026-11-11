@@ -680,11 +680,21 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   uploadImportFile: async (file: File) => {
     set({ importLoading: true, importError: null });
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binary);
+
       const res = await fetch('/api/import/preview', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_name: file.name,
+          content_base64: base64,
+        }),
       });
       const data: ImportPreviewResponse = await res.json();
       set({

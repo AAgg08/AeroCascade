@@ -54,9 +54,23 @@ async function startServer() {
       });
 
       if (response.ok) {
-        const data = await response.json();
         res.setHeader('X-Backend-Engine', 'FastAPI-Python');
-        return res.status(response.status).json(data);
+        const contentType = response.headers.get('content-type') || '';
+        const contentDisp = response.headers.get('content-disposition');
+        if (contentDisp) res.setHeader('Content-Disposition', contentDisp);
+        if (contentType) res.setHeader('Content-Type', contentType);
+
+        if (req.method === 'HEAD') {
+          return res.status(response.status).end();
+        }
+
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          return res.status(response.status).json(data);
+        } else {
+          const buffer = Buffer.from(await response.arrayBuffer());
+          return res.status(response.status).send(buffer);
+        }
       } else {
         const errJson = await response.json().catch(() => null);
         const errDetail = errJson?.detail || (await response.text().catch(() => ''));
