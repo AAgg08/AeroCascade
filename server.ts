@@ -21,10 +21,10 @@ async function startServer() {
     res: express.Response,
     fallback: (reason?: string) => unknown
   ) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
     try {
       const targetUrl = `${PYTHON_BACKEND_URL}${req.originalUrl}`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
 
       const headers: Record<string, string> = {
         Accept: 'application/json',
@@ -52,7 +52,6 @@ async function startServer() {
         body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(requestPayload) : undefined,
         signal: controller.signal,
       });
-      clearTimeout(timeout);
 
       if (response.ok) {
         const data = await response.json();
@@ -69,6 +68,8 @@ async function startServer() {
       }
     } catch (err) {
       await fallback(`Python backend unreachable: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -120,7 +121,7 @@ async function startServer() {
           scenario_id: payload.scenario_id || 'rtc-optical-asmgcs-spoof',
           horizon_hours: Number(payload.horizon_hours || 24),
           baseline_movements_per_hour: Number(payload.baseline_movements_per_hour || 48),
-          trigger_hour: Number(payload.trigger_hour || 4),
+          trigger_hour: Number(payload.trigger_hour ?? 4),
           nodes: Array.isArray(payload.nodes) ? payload.nodes : SCENARIO_PRESETS[0].nodes,
           edges: Array.isArray(payload.edges) ? payload.edges : SCENARIO_PRESETS[0].edges,
           provenance: {
