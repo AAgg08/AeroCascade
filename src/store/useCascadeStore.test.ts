@@ -237,6 +237,34 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(useCascadeStore.getState().backendError, null);
   });
 
+  await t.test('Structured validation errors preserve the last result and clear the loading state', async () => {
+    const previous = useCascadeStore.getState().simulationResult;
+    globalThis.fetch = async () => Response.json({
+      error: [{ loc: ['body', 'trigger_hour'], msg: 'Input should be a valid integer' }],
+    }, { status: 422 });
+
+    await useCascadeStore.getState().executeSimulationOnServer();
+
+    const state = useCascadeStore.getState();
+    assert.equal(state.backendError, 'Check the simulation inputs. trigger_hour: Input should be a valid integer');
+    assert.equal(state.simulationResult, previous);
+    assert.equal(state.pendingRequestsCount, 0);
+    assert.equal(state.isSimulating, false);
+  });
+
+  await t.test('Empty or incomplete success responses do not lock the run controls', async () => {
+    const previous = useCascadeStore.getState().simulationResult;
+    for (const body of [null, {}]) {
+      globalThis.fetch = async () => Response.json(body);
+      await useCascadeStore.getState().executeSimulationOnServer();
+      const state = useCascadeStore.getState();
+      assert.match(state.backendError ?? '', /incomplete results/);
+      assert.equal(state.simulationResult, previous);
+      assert.equal(state.pendingRequestsCount, 0);
+      assert.equal(state.isSimulating, false);
+    }
+  });
+
   await t.test('Input validation rejects empty node list without dispatching network request', async () => {
     let fetchCalled = false;
     globalThis.fetch = async () => {
