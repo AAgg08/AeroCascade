@@ -1,3 +1,4 @@
+import { serializeWorkspace } from './workspaceSession.ts';
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { useCascadeStore } from './useCascadeStore.ts';
@@ -45,6 +46,8 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     useCascadeStore.setState({
       activeScenarioId: SCENARIO_PRESETS[0].id,
       baselineMovementsPerHour: 48,
+      costPerDelayedMovement: 7500,
+      simulationResult: useCascadeStore.getInitialState().simulationResult,
       triggerHour: 4,
       horizonHours: 24,
       nodes: structuredClone(SCENARIO_PRESETS[0].nodes),
@@ -59,6 +62,37 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
 
   t.afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  await t.test('Import replaces settings and prevents an older request from replacing the preview', async () => {
+    const preset = SCENARIO_PRESETS[1];
+    const nodes = structuredClone(preset.nodes);
+    nodes[0].tripartite.formal = 91;
+    const original = useCascadeStore.getState().simulationResult;
+    const pending = createDeferred<Response>();
+    globalThis.fetch = async () => pending.promise;
+    const run = useCascadeStore.getState().executeSimulationOnServer();
+
+    assert.equal(useCascadeStore.getState().importWorkspace('invalid'), false);
+    assert.equal(useCascadeStore.getState().simulationResult, original);
+    const text = serializeWorkspace({
+      activeScenarioId: preset.id, nodes, baselineMovementsPerHour: 72,
+      triggerHour: 0, costPerDelayedMovement: 0,
+    });
+    assert.equal(useCascadeStore.getState().importWorkspace(text), true);
+    const loaded = useCascadeStore.getState();
+    assert.equal(loaded.activeScenarioId, preset.id);
+    assert.equal(loaded.baselineMovementsPerHour, 72);
+    assert.equal(loaded.triggerHour, 0);
+    assert.equal(loaded.costPerDelayedMovement, 0);
+    assert.equal(loaded.nodes[0].tripartite.formal, 91);
+    assert.equal(loaded.simulationResult.provenance.engine, 'browser-typescript');
+    assert.equal(loaded.simulationResult.provenance.input_revision, loaded.inputRevision);
+
+    pending.resolve(Response.json(makeMockResponse('old-run', 1)));
+    await run;
+    assert.equal(useCascadeStore.getState().simulationResult, loaded.simulationResult);
+    assert.equal(useCascadeStore.getState().isSimulating, false);
   });
 
   await t.test('Edits during in-flight request: older response does not overwrite newer result', async () => {

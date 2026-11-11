@@ -1,6 +1,7 @@
 import { SCENARIO_PRESETS } from '../domain/scenarios.ts';
 import { PSOELevel, type FMEAMetrics, type SystemNodeModel, type TripartiteControls } from '../domain/types.ts';
 
+export const MAX_WORKSPACE_FILE_SIZE = 100_000;
 export const WORKSPACE_STORAGE_KEY = 'aerocascade.workspace.v1';
 
 export interface WorkspaceSettings {
@@ -29,7 +30,7 @@ function inRange(value: unknown, min: number, max: number, integer = false): val
 
 export function parseWorkspace(text: string): WorkspaceSettings | null {
   try {
-    if (text.length > 100_000) return null;
+    if (text.length > MAX_WORKSPACE_FILE_SIZE) return null;
     const value: unknown = JSON.parse(text);
     if (!record(value) || value.version !== 1) return null;
     const preset = SCENARIO_PRESETS.find((scenario) => scenario.id === value.activeScenarioId);
