@@ -10,7 +10,7 @@ export const SCENARIO_PRESETS: ScenarioPreset[] = [
   {
     id: 'rtc-optical-asmgcs-spoof',
     title: 'Scenario I: Optical Panorama & A-SMGCS Sensor Desynchronization',
-    subtitle: 'Multi-Aerodrome Remote Tower Centre (RTC) · Visual/Surveillance Integrity Attack',
+    subtitle: 'Multi-Aerodrome Remote Tower Centre (RTC) · Visual/Surveillance Integrity Attack (Illustrative Model Configuration)',
     aerodrome_profile: 'Dual-Runway Regional Hub + 2 Satellite Remote Aerodromes (48 mvmt/hr)',
     baseline_movements_per_hour: 48,
     trigger_hour: 4,
@@ -267,7 +267,7 @@ export const SCENARIO_PRESETS: ScenarioPreset[] = [
   {
     id: 'swim-amhs-flight-object-lockout',
     title: 'Scenario II: SWIM Flight Object & AMHS Integrity Cascade',
-    subtitle: 'System Wide Information Management · Electronic Flight Strip (EFS) Corruption',
+    subtitle: 'System Wide Information Management · Electronic Flight Strip (EFS) Corruption (Illustrative Model Configuration)',
     aerodrome_profile: 'High-Density Remote Tower Hub (60 mvmt/hr)',
     baseline_movements_per_hour: 60,
     trigger_hour: 3,
@@ -418,7 +418,7 @@ export const SCENARIO_PRESETS: ScenarioPreset[] = [
   {
     id: 'c2-sdwan-agl-plc-blackout',
     title: 'Scenario III: SD-WAN C2 Link Hijack & Airfield Ground Lighting (AGL) PLC Fault',
-    subtitle: 'Remote Mast-to-RTC Backbone · OT/SCADA Stop-Bar Interlock Disruption',
+    subtitle: 'Remote Mast-to-RTC Backbone · OT/SCADA Stop-Bar Interlock Disruption (Illustrative Model Configuration)',
     aerodrome_profile: 'Low-Visibility CAT III Remote Aerodrome (36 mvmt/hr)',
     baseline_movements_per_hour: 36,
     trigger_hour: 5,

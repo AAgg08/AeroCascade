@@ -8,6 +8,7 @@ import {
   type FMEAMetrics,
   type HourlyCapacityPoint,
   type NodeCentralityMetric,
+  type ResultProvenance,
   type SimulationResponse,
   type SystemNodeModel,
 } from './types.ts';
@@ -24,7 +25,24 @@ export function calculateRawRPN(fmea: FMEAMetrics): number {
 }
 
 /**
- * Dynamically evaluates PSOE (Present, Suitable, Operational, Effective) maturity
+ * Evaluates illustrative PSOE maturity level from a composite control score (0-100).
+ * Thresholds:
+ *   Score <= 0: NOT_PRESENT (Zero settings cannot assert evidenced presence)
+ *   Score >= 75: EFFECTIVE
+ *   Score >= 55: OPERATIONAL
+ *   Score >= 35: SUITABLE
+ *   Score > 0: PRESENT
+ */
+export function evaluateControlMaturityPSOE(score: number): PSOELevel {
+  if (score <= 0.0) return PSOELevel.NOT_PRESENT;
+  if (score >= 75.0) return PSOELevel.EFFECTIVE;
+  if (score >= 55.0) return PSOELevel.OPERATIONAL;
+  if (score >= 35.0) return PSOELevel.SUITABLE;
+  return PSOELevel.PRESENT;
+}
+
+/**
+ * Dynamically evaluates illustrative PSOE (Present, Suitable, Operational, Effective) maturity
  * from Dhillon & Moores (2001) Tripartite Controls based on stage-dominant requirements.
  */
 export function evaluateNodePSOE(node: SystemNodeModel): PSOELevel {
@@ -37,16 +55,19 @@ export function evaluateNodePSOE(node: SystemNodeModel): PSOELevel {
   } else {
     score = 0.1 * technical + 0.45 * formal + 0.45 * informal;
   }
-
-  if (score >= 76) return PSOELevel.EFFECTIVE;
-  if (score >= 56) return PSOELevel.OPERATIONAL;
-  if (score >= 38) return PSOELevel.SUITABLE;
-  return PSOELevel.PRESENT;
+  return evaluateControlMaturityPSOE(score);
 }
 
 /**
- * Computes residual FMEA RPN after applying Dhillon & Moores (2001) Tripartite Controls
+ * Computes mitigation-only adjusted risk score after applying Dhillon & Moores (2001) Tripartite Controls
  * and Policy Investment (0-100).
+ *
+ * Invariant:
+ * 0.0 <= adjustedScore <= rawRPN for all raw scores 1..125.
+ * Never exceeds raw RPN (including low raw scores 1-4).
+ * Monotonically non-increasing as controls increase.
+ *
+ * Note: Fractional adjusted score is an illustrative modeling assumption, not an integer reassessment of FMEA factors.
  */
 export function computeResidualRPN(node: SystemNodeModel): number {
   const raw = calculateRawRPN(node.fmea);
@@ -65,8 +86,10 @@ export function computeResidualRPN(node: SystemNodeModel): number {
     mitigationFactor = 0.10 * t + 0.45 * f + 0.45 * i;
   }
 
+  // Model assumption: damping combines control maturity (75%) with policy investment (25%) and caps at 78%
   const combinedDamping = Math.min(0.78, (0.75 * mitigationFactor + 0.25 * inv) * 0.85);
-  return Number(Math.max(5.0, raw * (1.0 - combinedDamping)).toFixed(1));
+  const adjusted = Math.min(raw, Math.max(0.0, raw * (1.0 - combinedDamping)));
+  return Number(adjusted.toFixed(1));
 }
 
 /**
@@ -146,6 +169,7 @@ export function computeGraphCentrality(
       chokepoint_index: chokepointIndex,
       raw_rpn: rawRpn,
       residual_rpn: residualRpn,
+      adjusted_risk_score: residualRpn,
       policy_investment: node.fmea.policy_investment,
       investment_efficiency_gap: efficiencyGap,
       psoe_status: psoe,
@@ -168,6 +192,7 @@ export interface SimulationInputParams {
   trigger_hour: number;
   nodes: SystemNodeModel[];
   edges: DependencyEdgeModel[];
+  provenance?: ResultProvenance;
 }
 
 /**
@@ -337,12 +362,13 @@ export function runDiscreteEventSimulation(req: SimulationInputParams): Simulati
 
     hourlyCapacity.push({
       hour: h,
-      time_label: `${String(h).padStart(2, '0')}:00Z`,
+      time_label: `T+${String(h).padStart(2, '0')}:00`,
       baseline_capacity: base,
       unmitigated_capacity: unmit,
       technical_only_capacity: techOnly,
       tripartite_mitigated_capacity: tripartiteCap,
       active_stage: stageLabel,
+      estimated_lost_capacity_cumulative: cumulativeDelayed,
       delayed_flights_cumulative: cumulativeDelayed,
     });
   }
@@ -355,30 +381,29 @@ export function runDiscreteEventSimulation(req: SimulationInputParams): Simulati
   const sortedByChokepoint = [...nodeAnalytics].sort((a, b) => b.chokepoint_index - a.chokepoint_index);
   const topChokepoint = sortedByChokepoint[0];
 
-  const toPSOELevel = (score: number): PSOELevel => {
-    if (score >= 75) return PSOELevel.EFFECTIVE;
-    if (score >= 55) return PSOELevel.OPERATIONAL;
-    if (score >= 38) return PSOELevel.SUITABLE;
-    return PSOELevel.PRESENT;
-  };
+  const statutoryRegulations = [
+    'Commission Delegated Regulation (EU) 2022/1645 (Part-IS.D)',
+    'Commission Implementing Regulation (EU) 2023/203 (Part-IS.I, including IS.I.OR.230)',
+  ];
+  const voluntaryStandards = [
+    'EUROCAE ED-202A / ER-040 Information Security Management Guidelines (Voluntary Guidance)',
+  ];
 
   const easaNotification: EASAPartISNotification = {
-    report_id: `EASA-PART-IS-${req.scenario_id.toUpperCase()}-2026`,
-    regulation_basis: [
-      'Commission Delegated Regulation (EU) 2022/1645 (Part-IS.D.OR.200 / 230)',
-      'Commission Implementing Regulation (EU) 2023/203 (Part-IS.I.OR.230)',
-      'EUROCAE ED-202A / ER-040 Safety & Information Security Risk Process',
-    ],
+    report_id: `EASA-PART-IS-${req.scenario_id.toUpperCase()}-2026-EXERCISE-DRAFT`,
+    regulation_basis: [...statutoryRegulations, ...voluntaryStandards],
+    statutory_regulations: statutoryRegulations,
+    voluntary_standards: voluntaryStandards,
     reporting_entity: 'Remote Tower Centre (RTC) Multi-Aerodrome Operations Authority',
     initial_notification_deadline_hours: 72,
     incident_classification:
       meanResidualRpn > 50
-        ? 'Priority 1 — Significant Information Security Incident Affecting Flight Safety & Capacity'
-        : 'Priority 2 — Contained Aviation Information Security Perturbation',
+        ? 'Illustrative Priority 1 — Operational Perturbation Benchmark'
+        : 'Illustrative Priority 2 — Contained Perturbation Benchmark',
     er040_risk_class:
       meanResidualRpn > 45
-        ? 'ER-040 Class II (Hazardous) — Immediate Tripartite Mitigation Mandatory'
-        : 'ER-040 Class III (Major) —Acceptable with Continuous PSOE Monitoring',
+        ? 'Illustrative 5x5 Class II (Hazardous — Model Benchmark)'
+        : 'Illustrative 5x5 Class III (Major — Model Benchmark)',
     affected_assets: req.nodes.map((n) => `${n.code}: ${n.label}`),
     stage_1_technical_root_cause: stage1Nodes.map((n) => `${n.code} (${n.failure_mode})`).join(' | '),
     stage_2_operational_propagation: stage2Nodes.map((n) => `${n.code} (${n.failure_mode})`).join(' | '),
@@ -386,23 +411,62 @@ export function runDiscreteEventSimulation(req: SimulationInputParams): Simulati
       .map((n) => `${n.code} [${n.dominant_control}]: ${n.failure_mode}`)
       .join(' | '),
     psoe_maturity_summary: {
-      'Technical Controls (Encryption, IDS, PTP Holdover)': toPSOELevel(avgTech),
-      'Formal Controls (Part-IS Reversion SOPs & SLAs)': toPSOELevel(avgFormal),
-      'Informal Controls (ATCO Cognitive Trust & Culture)': toPSOELevel(avgInformal),
+      'Technical Controls (Encryption, IDS, PTP Holdover)': evaluateControlMaturityPSOE(avgTech),
+      'Formal Controls (Part-IS Reversion SOPs & SLAs)': evaluateControlMaturityPSOE(avgFormal),
+      'Informal Controls (ATCO Cognitive Trust & Culture)': evaluateControlMaturityPSOE(avgInformal),
     },
-    containment_actions: stage1Nodes.concat(stage2Nodes).map((n) => `${n.code}: ${n.mitigation_recommendation}`),
-    structural_remediations: stage3Nodes.map((n) => `${n.code} (${n.dominant_control}): ${n.mitigation_recommendation}`),
+    containment_actions: stage1Nodes.concat(stage2Nodes).map((n) => `Proposed Action: ${n.code}: ${n.mitigation_recommendation}`),
+    structural_remediations: stage3Nodes.map((n) => `Proposed Action: ${n.code} (${n.dominant_control}): ${n.mitigation_recommendation}`),
+    is_exercise_draft: true,
+    reporting_applicability: 'Not assessed (Subject to (EU) 2023/203 Art. 2 organizational scope)',
+    awareness_time: 'Not assessed (To be logged by operational incident team)',
+    official_guidance_url:
+      'https://www.easa.europa.eu/en/document-library/easy-access-rules/online-publications/easy-access-rules-information-security?erules-id=ERULES-1963177438-19981',
+    reporting_stages: [
+      {
+        stage_name: 'Stage 1: Initial Notification',
+        legal_basis: 'IS.I.OR.230(a)',
+        timing_rule: 'Without undue delay when the condition represents significant safety risk',
+        status: 'NOT_ASSESSED',
+        notes: 'Timing is tied to organizational awareness; not inferred from simulation time.',
+      },
+      {
+        stage_name: 'Stage 2: Initial Incident Report',
+        legal_basis: 'IS.I.OR.230(b)',
+        timing_rule: 'As soon as possible, within 72 hours unless exceptional circumstances prevent it',
+        status: 'SIMULATION_EXERCISE_DRAFT',
+        notes: 'Competent authority defines the submission template; draft output only.',
+      },
+      {
+        stage_name: 'Stage 3: Follow-Up Report',
+        legal_basis: 'IS.I.OR.230(c)',
+        timing_rule: 'Following detailed investigation and root-cause analysis',
+        status: 'PENDING_INVESTIGATION',
+        notes: 'Comprehensive technical and organizational remediation analysis.',
+      },
+    ],
   };
 
   return {
     scenario_id: req.scenario_id,
+    input_snapshot: {
+      scenario_id: req.scenario_id,
+      horizon_hours: req.horizon_hours,
+      baseline_movements_per_hour: req.baseline_movements_per_hour,
+      trigger_hour: req.trigger_hour,
+      nodes: req.nodes,
+      edges: req.edges,
+    },
     summary_kpis: {
       mean_raw_rpn: Number(meanRawRpn.toFixed(1)),
       mean_residual_rpn: Number(meanResidualRpn.toFixed(1)),
+      mean_adjusted_risk: Number(meanResidualRpn.toFixed(1)),
       min_hourly_capacity: Number(minCap.toFixed(1)),
       capacity_retention_pct: Number(((minCap / req.baseline_movements_per_hour) * 100.0).toFixed(1)),
       recovery_window_hours: recoveryWindowHours,
       total_disrupted_movements: cumulativeDelayed,
+      estimated_lost_movement_capacity: cumulativeDelayed,
+      average_control_score: Number(((avgTech + avgFormal + avgInformal) / 3.0).toFixed(1)),
       tripartite_balance_index: Number(((avgTech + avgFormal + avgInformal) / 3.0).toFixed(1)),
       top_chokepoint_code: topChokepoint ? topChokepoint.node_code : 'N/A',
       top_chokepoint_score: topChokepoint ? topChokepoint.chokepoint_index : 0,
@@ -411,5 +475,13 @@ export function runDiscreteEventSimulation(req: SimulationInputParams): Simulati
     hourly_capacity: hourlyCapacity,
     node_analytics: nodeAnalytics,
     easa_notification: easaNotification,
+    provenance: req.provenance ?? {
+      engine: 'browser-typescript',
+      engine_label: 'In-Browser Client (TypeScript Engine)',
+      model_version: '1.0.0-illustrative',
+      input_revision: 1,
+      generated_at: new Date().toISOString(),
+      is_fallback: false,
+    },
   };
 }
