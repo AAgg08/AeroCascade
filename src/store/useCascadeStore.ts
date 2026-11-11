@@ -36,6 +36,7 @@ interface CascadeState {
   latestRequestId: number;
   pendingRequestsCount: number;
   backendError: string | null;
+  costPerDelayedMovement: number;
 
   setActiveTab: (tab: WorkspaceTab) => void;
   selectScenario: (scenarioId: string) => void;
@@ -46,6 +47,7 @@ interface CascadeState {
   applyGlobalPreset: (mode: 'baseline' | 'technical-heavy' | 'tripartite-balanced' | 'unmitigated-stress') => void;
   setTriggerHour: (hour: number) => void;
   setBaselineMovements: (mvmt: number) => void;
+  setCostPerDelayedMovement: (cost: number) => void;
   executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean; replicates?: number }) => Promise<void>;
   clearBackendError: () => void;
 }
@@ -89,8 +91,12 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   latestRequestId: 0,
   pendingRequestsCount: 0,
   backendError: null,
+  costPerDelayedMovement: 7500,
 
   clearBackendError: () => set({ backendError: null }),
+
+  setCostPerDelayedMovement: (cost: number) =>
+    set({ costPerDelayedMovement: Math.max(0, Number.isFinite(cost) ? cost : 0) }),
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 

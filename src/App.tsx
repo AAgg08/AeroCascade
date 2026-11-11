@@ -37,6 +37,8 @@ export default function App() {
     inputRevision,
     backendError,
     clearBackendError,
+    costPerDelayedMovement,
+    setCostPerDelayedMovement,
   } = useCascadeStore();
 
   const isStale = inputRevision > (simulationResult.provenance?.input_revision ?? 0);
@@ -327,12 +329,31 @@ export default function App() {
                       {lostCapacity} estimated lost movements
                     </span>
                     {lostCapacity > 0 && (
-                      <span
-                        className="font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 text-[11px]"
-                        title="Direct airline delay & passenger disruption cost calculated at standard $7,500/movement benchmark"
-                      >
-                        ≈ ${( (lostCapacity * 7500) / 1_000_000 ).toFixed(1)}M est. disruption
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          data-testid="kpi-disruption-cost-badge"
+                          className="font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 text-[11px]"
+                          title={`Direct airline delay & passenger disruption cost (${costPerDelayedMovement.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/movement benchmark)`}
+                        >
+                          ≈ ${((lostCapacity * costPerDelayedMovement) / 1_000_000).toFixed(1)}M est. disruption
+                        </span>
+                        <label
+                          className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full border border-gray-200 shadow-2xs"
+                          title="Adjust cost per delayed movement to recalculate financial disruption"
+                        >
+                          <span className="text-gray-400">$</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={500}
+                            value={costPerDelayedMovement}
+                            onChange={(e) => setCostPerDelayedMovement(Number(e.target.value))}
+                            aria-label="Cost per movement in dollars"
+                            className="w-16 rounded-full bg-white px-1.5 py-0.5 text-right text-[11px] font-bold text-gray-800 border border-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                          <span className="text-gray-400">/mvmt</span>
+                        </label>
+                      </div>
                     )}
                   </div>
                 </div>

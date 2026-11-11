@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { useCascadeStore } from './useCascadeStore.ts';
 import { SCENARIO_PRESETS } from '../domain/scenarios.ts';
 import type { SimulationResponse } from '../domain/types.ts';
+import { buildDagreCascadeLayout } from '../utils/dagreLayout.ts';
+import { computeGraphCentrality } from '../domain/simulationEngine.ts';
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -537,5 +539,68 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
       afterMonteCarloState.simulationResult.hourly_capacity[0].capacity_95th !== undefined,
       '95th percentile band must be present for Monte Carlo run'
     );
+  });
+
+  await t.test('Disruption Cost Multiplier: configurable state defaults to 7500 and updates dynamically', async () => {
+    const store = useCascadeStore.getState();
+    assert.equal(store.costPerDelayedMovement, 7500, 'costPerDelayedMovement must default to 7500');
+
+    // Baseline calculation check: 145 flights * 7500 = $1,087,500 ≈ $1.1M
+    const lostFlights = 145;
+    const initialDisruptionMillions = ((lostFlights * store.costPerDelayedMovement) / 1_000_000).toFixed(1);
+    assert.equal(initialDisruptionMillions, '1.1', '145 lost flights at $7,500 must equal $1.1M est. disruption');
+
+    // Update cost multiplier to 12,000
+    const prevRev = store.inputRevision;
+    useCascadeStore.getState().setCostPerDelayedMovement(12000);
+    const updatedStore = useCascadeStore.getState();
+    assert.equal(updatedStore.costPerDelayedMovement, 12000, 'costPerDelayedMovement must update to 12000');
+    assert.equal(
+      updatedStore.inputRevision,
+      prevRev,
+      'Cost multiplier change is analytical telemetry and must not invalidate simulation input revision'
+    );
+
+    const updatedDisruptionMillions = ((lostFlights * updatedStore.costPerDelayedMovement) / 1_000_000).toFixed(1);
+    assert.equal(updatedDisruptionMillions, '1.7', '145 lost flights at $12,000 must recalculate to $1.7M est. disruption');
+
+    // Negative values must be clamped to 0
+    useCascadeStore.getState().setCostPerDelayedMovement(-500);
+    assert.equal(useCascadeStore.getState().costPerDelayedMovement, 0, 'Negative values must be clamped to 0');
+  });
+
+  await t.test('Dagre layout spacing: columns expanded (+40px) and vertical nodes spaced (+25px)', async () => {
+    const scenario = SCENARIO_PRESETS[0];
+    const centralityMap = computeGraphCentrality(scenario.nodes, scenario.edges);
+    const { flowNodes, flowEdges } = buildDagreCascadeLayout(scenario.nodes, scenario.edges, centralityMap, null);
+
+    // Find Stage 1, Stage 2, and Stage 3 nodes
+    const stage1Nodes = flowNodes.filter((n) => n.data.nodeModel.stage === 'STAGE_1_TRIGGER');
+    const stage2Nodes = flowNodes.filter((n) => n.data.nodeModel.stage === 'STAGE_2_PROPAGATION');
+    const stage3Nodes = flowNodes.filter((n) => n.data.nodeModel.stage === 'STAGE_3_BLOCKER');
+
+    assert.ok(stage1Nodes.length > 0 && stage2Nodes.length > 0 && stage3Nodes.length > 0);
+
+    // Column horizontal positions
+    assert.equal(stage1Nodes[0].position.x, 24, 'Stage 1 X coordinate must be 24');
+    assert.equal(stage2Nodes[0].position.x, 514, 'Stage 2 X coordinate must be 514 (expanded horizontal spacing)');
+    assert.equal(stage3Nodes[0].position.x, 1004, 'Stage 3 X coordinate must be 1004 (expanded horizontal spacing)');
+
+    // Column gap: 514 - (24 + 310) = 180px gap between columns
+    const colGap = stage2Nodes[0].position.x - (stage1Nodes[0].position.x + 310);
+    assert.equal(colGap, 180, 'Horizontal gap between Stage 1 and Stage 2 columns must be 180px');
+
+    // Vertical spacing between consecutive nodes in same column: (NODE_HEIGHT + 49) = 176 + 49 = 225
+    if (stage2Nodes.length > 1) {
+      const sortedY = stage2Nodes.map((n) => n.position.y).sort((a, b) => a - b);
+      const verticalGap = sortedY[1] - (sortedY[0] + 176);
+      assert.equal(verticalGap, 49, 'Vertical gap between consecutive cards must be 49px (24px + 25px)');
+    }
+
+    // Edge label styling: light-mode pill with border and high contrast
+    assert.ok(flowEdges.length > 0);
+    const firstEdge = flowEdges[0];
+    assert.equal(firstEdge.labelBgStyle?.fill, '#FFFFFF', 'Edge label background must be white');
+    assert.equal(firstEdge.labelBgBorderRadius, 6, 'Edge label background must have 6px border radius');
   });
 });
