@@ -72,6 +72,35 @@ function simulationErrorMessage(payload: unknown, status: number): string {
   return `Simulation request failed (HTTP ${status}). Please try again.`;
 }
 
+export interface DossierApprovalRecord {
+  run_id: string;
+  approval_type: 'enterprise' | 'exercise' | 'legacy';
+  approver: string;
+  approver_role: string;
+  signoff_notes: string;
+  run_sha256: string;
+  topology_id?: string;
+  topology_version?: number;
+  authenticated_account?: string | null;
+  approved_at: string;
+}
+
+export interface UserSessionInfo {
+  username: string;
+  role: string;
+  enterprise: boolean;
+}
+
+export interface RunServerState {
+  isPersisted: boolean;
+  isStale: boolean;
+  runSha256: string | null;
+  serverTopologyId: string | null;
+  serverTopologyVersion: number | null;
+  approvalStatus?: string;
+  allApprovals?: Record<string, DossierApprovalRecord>;
+}
+
 interface CascadeState {
   workspaceSaveStatus: 'none' | 'saved' | 'restored' | 'invalid' | 'unavailable';
   activeTab: WorkspaceTab;
@@ -107,6 +136,20 @@ interface CascadeState {
   importPreview: ImportPreviewResponse | null;
   importLoading: boolean;
   importError: string | null;
+  userSession: UserSessionInfo | null;
+  activeDevRole: string;
+  runApproval: DossierApprovalRecord | null;
+  runServerState: RunServerState | null;
+  dossierLoading: boolean;
+  dossierError: string | null;
+  dossierSuccessMessage: string | null;
+
+  fetchUserSession: () => Promise<void>;
+  setActiveDevRole: (role: string) => Promise<void>;
+  fetchRunApprovalStatus: (runId?: string) => Promise<void>;
+  approveCurrentRun: (signoffNotes: string, approverName?: string) => Promise<boolean>;
+  downloadEvidenceJson: () => Promise<boolean>;
+  clearDossierMessages: () => void;
 
   setActiveTab: (tab: WorkspaceTab) => void;
   selectScenario: (scenarioId: string, settings?: WorkspaceSettings) => void;
@@ -195,6 +238,13 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   importPreview: null,
   importLoading: false,
   importError: null,
+  userSession: null,
+  activeDevRole: 'analyst',
+  runApproval: null,
+  runServerState: null,
+  dossierLoading: false,
+  dossierError: null,
+  dossierSuccessMessage: null,
 
   setTopologyModalOpen: (open: boolean) => set({ isTopologyModalOpen: open }),
   clearTopologyConflictError: () => set({ topologyConflictError: null }),
@@ -450,6 +500,7 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
         },
         body: JSON.stringify({
           scenario_id: state.activeScenarioId,
+          topology_version: state.currentTopologyVersion ?? undefined,
           horizon_hours: state.horizonHours,
           baseline_movements_per_hour: state.baselineMovementsPerHour,
           trigger_hour: state.triggerHour,
@@ -520,6 +571,9 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
         backendError: null,
         lastSyncedAt: `${engineLabel}${repTag} (Rev #${requestRevision}) at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
       });
+      if (responseData.run_id) {
+        get().fetchRunApprovalStatus(responseData.run_id);
+      }
     }
   },
 
@@ -800,6 +854,249 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   },
 
   clearImportPreview: () => set({ importPreview: null, importError: null }),
+
+  fetchUserSession: async () => {
+    try {
+      const devRole = get().activeDevRole;
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (devRole) headers['X-AeroCascade-Role'] = devRole;
+      const res = await fetch('/api/auth/session', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        set({ userSession: data });
+      }
+    } catch {
+      // Non-fatal if offline
+    }
+  },
+
+  setActiveDevRole: async (role: string) => {
+    set({ activeDevRole: role });
+    await get().fetchUserSession();
+    await get().fetchRunApprovalStatus();
+  },
+
+  fetchRunApprovalStatus: async (targetRunId?: string) => {
+    const state = get();
+    const runId = targetRunId || state.simulationResult?.run_id;
+    if (!runId) {
+      set({
+        runApproval: null,
+        runServerState: null,
+      });
+      return;
+    }
+    set({ dossierLoading: true });
+    try {
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (state.activeDevRole) headers['X-AeroCascade-Role'] = state.activeDevRole;
+      const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        const isInputStale = state.inputRevision !== state.simulationResult?.provenance?.input_revision;
+        const isVersionMismatch = data.topology_version !== (state.currentTopologyVersion ?? 1);
+        set({
+          runApproval: data.approval || null,
+          runServerState: {
+            isPersisted: true,
+            isStale: isInputStale || isVersionMismatch,
+            runSha256: data.run_sha256 || null,
+            serverTopologyId: data.topology_id,
+            serverTopologyVersion: data.topology_version,
+            approvalStatus: data.approval_status,
+            allApprovals: data.all_approvals || {},
+          },
+          dossierLoading: false,
+        });
+      } else if (res.status === 404) {
+        set({
+          runApproval: null,
+          runServerState: {
+            isPersisted: false,
+            isStale: true,
+            runSha256: null,
+            serverTopologyId: null,
+            serverTopologyVersion: null,
+          },
+          dossierLoading: false,
+        });
+      } else {
+        set({ dossierLoading: false });
+      }
+    } catch {
+      set({ dossierLoading: false });
+    }
+  },
+
+  approveCurrentRun: async (signoffNotes: string, approverName?: string) => {
+    if (!signoffNotes || !signoffNotes.trim()) {
+      set({ dossierError: 'Sign-off notes are required for regulatory dossier approval.', dossierSuccessMessage: null });
+      return false;
+    }
+    const state = get();
+    const runId = state.simulationResult?.run_id;
+    if (!runId) {
+      set({
+        dossierError: 'No persisted run ID found. Execute a simulation against a saved topology version before approving.',
+        dossierSuccessMessage: null,
+      });
+      return false;
+    }
+
+    const isInputStale = state.inputRevision !== state.simulationResult?.provenance?.input_revision;
+    if (isInputStale) {
+      set({
+        dossierError: 'Current workspace inputs have changed since this simulation was run. Re-run simulation against saved topology before sign-off.',
+        dossierSuccessMessage: null,
+      });
+      return false;
+    }
+
+    set({ dossierLoading: true, dossierError: null, dossierSuccessMessage: null });
+    const topologyId = state.currentTopologyId || state.simulationResult.scenario_id;
+    const topologyVersion = state.currentTopologyVersion ?? 1;
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      };
+      if (state.activeDevRole) {
+        headers['X-AeroCascade-Role'] = state.activeDevRole;
+      }
+
+      const payload = {
+        topology_id: topologyId,
+        topology_version: topologyVersion,
+        run_id: runId,
+        signoff_notes: signoffNotes.trim(),
+        approver_name: approverName?.trim() || state.userSession?.username || 'Designated Approver',
+      };
+
+      const res = await fetch('/api/dossier/approve', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      if (res.status === 403) {
+        const currentRole = state.userSession?.role || state.activeDevRole;
+        set({
+          dossierLoading: false,
+          dossierError: `Role denial: Current role '${currentRole}' is not authorized to sign off. Only Designated Approvers or Administrators may approve regulatory dossiers.`,
+        });
+        return false;
+      }
+
+      if (res.status === 409) {
+        const errJson = await res.json().catch(() => ({}));
+        const detail = errJson.detail || 'This run already has an approval recorded in the immutable audit log.';
+        set({
+          dossierLoading: false,
+          dossierError: detail,
+        });
+        await state.fetchRunApprovalStatus(runId);
+        return false;
+      }
+
+      if (res.status === 404) {
+        set({
+          dossierLoading: false,
+          dossierError: 'Simulation run not found on server. Re-run simulation against a saved topology version before sign-off.',
+        });
+        return false;
+      }
+
+      if (res.status === 422) {
+        const errJson = await res.json().catch(() => ({}));
+        set({
+          dossierLoading: false,
+          dossierError: errJson.detail || 'A saved topology version and persisted run ID are required for approval.',
+        });
+        return false;
+      }
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        set({
+          dossierLoading: false,
+          dossierError: errJson.detail || `Approval failed with HTTP ${res.status}.`,
+        });
+        return false;
+      }
+
+      const resData = await res.json();
+      set({
+        dossierLoading: false,
+        dossierSuccessMessage: 'Simulation run successfully approved as an internal compliance record. Run integrity check verified.',
+        runApproval: resData.approval || null,
+      });
+      await get().fetchRunApprovalStatus(runId);
+      return true;
+    } catch (err) {
+      set({
+        dossierLoading: false,
+        dossierError: `Network error connecting to approval service: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return false;
+    }
+  },
+
+  downloadEvidenceJson: async () => {
+    const state = get();
+    const runId = state.simulationResult?.run_id;
+    if (!runId) {
+      set({ dossierError: 'No run ID available for evidence export.' });
+      return false;
+    }
+    const topologyId = state.currentTopologyId || state.simulationResult.scenario_id;
+    const topologyVersion = state.currentTopologyVersion ?? 1;
+
+    set({ dossierLoading: true, dossierError: null });
+    try {
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (state.activeDevRole) {
+        headers['X-AeroCascade-Role'] = state.activeDevRole;
+      }
+      const res = await fetch(
+        `/api/export/dossier?topology_id=${encodeURIComponent(topologyId)}&topology_version=${topologyVersion}&run_id=${encodeURIComponent(runId)}`,
+        { headers }
+      );
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        set({
+          dossierLoading: false,
+          dossierError: errJson.detail || `Export failed with HTTP ${res.status}.`,
+        });
+        return false;
+      }
+
+      const data = await res.json();
+      if (typeof document !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `aerocascade-evidence-${runId}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+
+      set({ dossierLoading: false });
+      return true;
+    } catch (err) {
+      set({
+        dossierLoading: false,
+        dossierError: `Network error downloading evidence JSON: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return false;
+    }
+  },
+
+  clearDossierMessages: () => set({ dossierError: null, dossierSuccessMessage: null }),
 }));
 
 if (typeof window !== 'undefined') {

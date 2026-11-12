@@ -209,6 +209,7 @@ def canonical_to_simulation_request(
         "replicates": 1,
         "random_seed": 2026,
         "input_revision": canonical.version,
+        "topology_version": canonical.version,
     }
 
     if overrides:

@@ -66,6 +66,13 @@ else
   exit 1
 fi
 
+echo "Checking loaded image runtimes without network access..."
+if ! docker run --rm --network none --pull never --entrypoint node aerocascade-gateway:2.0.0 --version \
+  || ! docker run --rm --network none --pull never --entrypoint python aerocascade-backend:2.0.0 --version; then
+  echo "Error: Loaded images cannot run on this Docker host. Rebuild the release for the target architecture." >&2
+  exit 1
+fi
+
 # Step 4: Provision Customer-Approved Encrypted Storage Mounts
 echo "[4/5] Preparing persistent data and backup volumes..."
 DATA_DIR="${ENCRYPTED_DATA_PATH:-./data}"
@@ -75,9 +82,9 @@ mkdir -p "${DATA_DIR}" "${BACKUP_DIR}"
 
 # Ensure unprivileged non-root container user (UID 10001) has write access
 if [ "$(id -u)" -eq 0 ]; then
-  chown -R 10001:10001 "${DATA_DIR}" "${BACKUP_DIR}"
+  chown 10001:10001 "${DATA_DIR}" "${BACKUP_DIR}"
 fi
-chmod 775 "${DATA_DIR}" "${BACKUP_DIR}"
+chmod 770 "${DATA_DIR}" "${BACKUP_DIR}"
 
 # Step 5: Start Services via Docker Compose (Strict Offline Mode)
 echo "[5/5] Launching AeroCascade containers..."

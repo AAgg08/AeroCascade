@@ -304,6 +304,7 @@ export interface SimulationResponse {
 
 export interface SimulationRequestPayload {
   scenario_id: string;
+  topology_version?: number;
   horizon_hours?: number;
   baseline_movements_per_hour?: number;
   trigger_hour?: number;

@@ -1,5 +1,3 @@
-version: '3.8'
-
 # AeroCascade Air-Gapped Enterprise Deployment
 # Architecture:
 # - Loopback-only ingress (127.0.0.1:3000) for local access or reverse proxy termination
@@ -64,8 +62,16 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - aerocascade-data:/var/lib/aerocascade/data:rw
-      - aerocascade-backups:/var/lib/aerocascade/backups:rw
+      - type: bind
+        source: ${ENCRYPTED_DATA_PATH:-./data}
+        target: /var/lib/aerocascade/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ENCRYPTED_BACKUP_PATH:-./backups}
+        target: /var/lib/aerocascade/backups
+        bind:
+          create_host_path: false
     networks:
       - aerocascade-internal
     healthcheck:
@@ -79,17 +85,3 @@ networks:
   aerocascade-internal:
     driver: bridge
     internal: true
-
-volumes:
-  aerocascade-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${ENCRYPTED_DATA_PATH:-./data}
-  aerocascade-backups:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${ENCRYPTED_BACKUP_PATH:-./backups}

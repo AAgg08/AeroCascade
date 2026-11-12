@@ -99,6 +99,47 @@ MIGRATIONS = [
         );
         """
     ),
+    (
+        3,
+        "003_approval_provenance_separation",
+        """
+        CREATE TABLE IF NOT EXISTS dossier_approvals_v3 (
+            run_id TEXT NOT NULL REFERENCES simulation_runs(run_id) ON DELETE CASCADE,
+            approval_type TEXT NOT NULL CHECK(approval_type IN ('enterprise', 'exercise', 'legacy')),
+            approver TEXT NOT NULL,
+            approver_role TEXT NOT NULL,
+            signoff_notes TEXT NOT NULL,
+            run_sha256 TEXT NOT NULL,
+            topology_id TEXT,
+            topology_version INTEGER,
+            authenticated_account TEXT,
+            approved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            PRIMARY KEY (run_id, approval_type)
+        );
+
+        INSERT OR IGNORE INTO dossier_approvals_v3 (
+            run_id, approval_type, approver, approver_role, signoff_notes, run_sha256, topology_id, topology_version, approved_at
+        )
+        SELECT 
+            da.run_id,
+            'legacy',
+            da.approver,
+            da.approver_role,
+            da.signoff_notes,
+            da.run_sha256,
+            sr.topology_id,
+            sr.topology_version,
+            da.approved_at
+        FROM dossier_approvals da
+        LEFT JOIN simulation_runs sr ON da.run_id = sr.run_id;
+
+        DROP TABLE IF EXISTS dossier_approvals;
+        ALTER TABLE dossier_approvals_v3 RENAME TO dossier_approvals;
+
+        CREATE INDEX IF NOT EXISTS idx_dossier_approvals_run ON dossier_approvals(run_id);
+        CREATE INDEX IF NOT EXISTS idx_dossier_approvals_type ON dossier_approvals(approval_type);
+        """
+    ),
 ]
 
 
@@ -555,25 +596,80 @@ class TopologyRepository:
             }
 
     def approve_run(
-        self, run_id: str, approver: str, approver_role: str, notes: str, run_sha256: str
+        self,
+        run_id: str,
+        approver: str,
+        approver_role: str,
+        notes: str,
+        run_sha256: str,
+        approval_type: str = "exercise",
+        topology_id: Optional[str] = None,
+        topology_version: Optional[int] = None,
+        authenticated_account: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Store one immutable approval per run. Return None if it was already approved."""
+        """Store one immutable approval per (run_id, approval_type). Return None if it was already approved."""
         with self._get_connection() as conn:
             row = conn.execute(
                 """
-                INSERT INTO dossier_approvals (run_id, approver, approver_role, signoff_notes, run_sha256)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (run_id) DO NOTHING
+                INSERT INTO dossier_approvals (
+                    run_id, approval_type, approver, approver_role, signoff_notes,
+                    run_sha256, topology_id, topology_version, authenticated_account
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (run_id, approval_type) DO NOTHING
                 RETURNING *;
                 """,
-                (run_id, approver, approver_role, notes, run_sha256),
+                (
+                    run_id,
+                    approval_type,
+                    approver,
+                    approver_role,
+                    notes,
+                    run_sha256,
+                    topology_id,
+                    topology_version,
+                    authenticated_account,
+                ),
             ).fetchone()
         return dict(row) if row else None
 
-    def get_run_approval(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_run_approval(
+        self, run_id: str, approval_type: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch the approval for a run. If approval_type is provided, fetch specifically for that type.
+        If None, return the most authoritative approval ('enterprise' > 'exercise' > 'legacy').
+        """
         with self._get_connection() as conn:
-            row = conn.execute("SELECT * FROM dossier_approvals WHERE run_id = ?;", (run_id,)).fetchone()
-        return dict(row) if row else None
+            if approval_type is not None:
+                row = conn.execute(
+                    "SELECT * FROM dossier_approvals WHERE run_id = ? AND approval_type = ?;",
+                    (run_id, approval_type),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT * FROM dossier_approvals
+                    WHERE run_id = ?
+                    ORDER BY CASE approval_type
+                        WHEN 'enterprise' THEN 1
+                        WHEN 'exercise' THEN 2
+                        WHEN 'legacy' THEN 3
+                        ELSE 4
+                    END ASC
+                    LIMIT 1;
+                    """,
+                    (run_id,),
+                ).fetchone()
+            return dict(row) if row else None
+
+    def get_all_run_approvals(self, run_id: str) -> Dict[str, Dict[str, Any]]:
+        """Return all recorded approvals for a run keyed by approval_type."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM dossier_approvals WHERE run_id = ? ORDER BY approved_at ASC;",
+                (run_id,),
+            ).fetchall()
+            return {row["approval_type"]: dict(row) for row in rows}
 
     def backup_database(self, backup_path: str) -> None:
         """Creates a consistent online SQLite backup at backup_path."""

@@ -20,6 +20,13 @@ mkdir -p "${RELEASE_DIR}"
 echo "--> Building pinned container images..."
 docker build -t aerocascade-gateway:2.0.0 -f Dockerfile.gateway .
 docker build -t aerocascade-backend:2.0.0 -f Dockerfile.backend .
+
+echo "--> Checking image runtimes with networking disabled..."
+docker run --rm --network none --pull never --entrypoint node aerocascade-gateway:2.0.0 \
+  -e 'require("express"); const fs = require("node:fs"); fs.accessSync("dist/index.html"); fs.accessSync("dist-server/server.mjs")'
+docker run --rm --network none --pull never --entrypoint python aerocascade-backend:2.0.0 \
+  -c 'import fastapi, networkx, numpy, openpyxl, simpy, uvicorn; from pathlib import Path; assert Path("backend/main.py").is_file()'
+
 docker save aerocascade-gateway:2.0.0 | gzip > "${RELEASE_DIR}/aerocascade-gateway-2.0.0.tar.gz"
 docker save aerocascade-backend:2.0.0 | gzip > "${RELEASE_DIR}/aerocascade-backend-2.0.0.tar.gz"
 

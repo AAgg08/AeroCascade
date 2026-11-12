@@ -75,6 +75,8 @@ shasum -a 256 -c release/SHA256SUMS
 
 All files must return `OK`.
 
+Build the release on a Docker host that matches the target architecture. The release packager checks that both images can start their runtimes without network access before saving them. The installer checks the loaded runtimes again on the target before starting the services.
+
 ---
 
 ## 3. Installation & Startup

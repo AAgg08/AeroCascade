@@ -332,8 +332,13 @@ class TestSecurityRBAC(unittest.TestCase):
                 self.assertEqual(client.get("/api/auth/session", auth=analyst).json()["role"], "analyst")
 
                 topology_id = "rtc-optical-asmgcs-spoof"
-                request = canonical_to_simulation_request(make_test_canonical())
-                response = client.post("/api/simulate", json=request.model_dump(mode="json"), auth=analyst)
+                request = canonical_to_simulation_request(make_test_canonical(), {"input_revision": 20})
+                simulation = request.model_dump(mode="json")
+                missing_version = {**simulation, "topology_version": None}
+                self.assertEqual(client.post("/api/simulate", json=missing_version, auth=analyst).status_code, 422)
+                missing_version = {**simulation, "topology_version": 999}
+                self.assertEqual(client.post("/api/simulate", json=missing_version, auth=analyst).status_code, 404)
+                response = client.post("/api/simulate", json=simulation, auth=analyst)
                 self.assertEqual(response.status_code, 200, response.text)
                 run_id = response.json()["run_id"]
                 payload = {
@@ -364,6 +369,200 @@ class TestSecurityRBAC(unittest.TestCase):
                 with main.repo._get_connection() as conn:
                     conn.execute("UPDATE simulation_runs SET result = '{}' WHERE run_id = ?", (run_id,))
                 self.assertEqual(client.get("/api/export/dossier", params=params, auth=analyst).status_code, 409)
+
+    def test_dev_mode_session_and_run_approval_lifecycle(self):
+        with TemporaryDirectory() as directory:
+            db_path = str(Path(directory) / "dev.db")
+            with (
+                patch.dict(os.environ, {"ENTERPRISE_MODE": ""}),
+                patch.object(main, "repo", TopologyRepository(db_path)),
+                TestClient(app) as client,
+            ):
+                # 1. Session endpoint defaults to analyst in dev
+                session_res = client.get("/api/auth/session")
+                self.assertEqual(session_res.status_code, 200)
+                self.assertEqual(session_res.json()["role"], "analyst")
+                self.assertFalse(session_res.json()["enterprise"])
+
+                # Session endpoint respects X-AeroCascade-Role in dev
+                approver_session = client.get("/api/auth/session", headers={"X-AeroCascade-Role": "approver"})
+                self.assertEqual(approver_session.json()["role"], "approver")
+
+                # 2. Simulate run
+                sim_req = canonical_to_simulation_request(make_test_canonical(), {"topology_version": 1})
+                sim_res = client.post("/api/simulate", json=sim_req.model_dump(mode="json"))
+                self.assertEqual(sim_res.status_code, 200)
+                run_id = sim_res.json()["run_id"]
+
+                # 3. Get run includes run_sha256 and approval: None
+                run_res = client.get(f"/api/runs/{run_id}")
+                self.assertEqual(run_res.status_code, 200)
+                run_data = run_res.json()
+                self.assertIsNotNone(run_data["run_sha256"])
+                self.assertIsNone(run_data["approval"])
+
+                # 4. Analyst role denied approval
+                approval_payload = {
+                    "topology_id": "rtc-optical-asmgcs-spoof",
+                    "topology_version": 1,
+                    "run_id": run_id,
+                    "signoff_notes": "Synthetic audit approval note.",
+                    "approver_name": "Dr. Quality Approver",
+                }
+                denied_res = client.post(
+                    "/api/dossier/approve",
+                    json=approval_payload,
+                    headers={"X-AeroCascade-Role": "analyst"},
+                )
+                self.assertEqual(denied_res.status_code, 403)
+
+                # 5. Approver role successfully approves
+                approved_res = client.post(
+                    "/api/dossier/approve",
+                    json=approval_payload,
+                    headers={"X-AeroCascade-Role": "approver"},
+                )
+                self.assertEqual(approved_res.status_code, 200)
+                self.assertIsNotNone(approved_res.json().get("approval"))
+
+                # 6. Re-approval is rejected with 409
+                dup_res = client.post(
+                    "/api/dossier/approve",
+                    json=approval_payload,
+                    headers={"X-AeroCascade-Role": "approver"},
+                )
+                self.assertEqual(dup_res.status_code, 409)
+
+                # 7. Get run now returns the stored approval
+                run_after_res = client.get(f"/api/runs/{run_id}")
+                self.assertIsNotNone(run_after_res.json()["approval"])
+                self.assertEqual(run_after_res.json()["approval"]["signoff_notes"], "Synthetic audit approval note.")
+
+                # 8. Export dossier includes run evidence and approval
+                export_res = client.get(
+                    f"/api/export/dossier?topology_id=rtc-optical-asmgcs-spoof&topology_version=1&run_id={run_id}",
+                    headers={"X-AeroCascade-Role": "analyst"},
+                )
+                self.assertEqual(export_res.status_code, 200)
+                export_data = export_res.json()
+                self.assertEqual(export_data["export_status"], "success")
+                self.assertEqual(export_data["run"]["run_id"], run_id)
+                self.assertIsNotNone(export_data["approval"])
+                self.assertEqual(export_data["approval"]["approval_type"], "exercise")
+
+
+    def test_reused_database_approval_provenance_separation(self):
+        """
+        Regression Test: A reused database containing pre-migration legacy or unauthenticated exercise approvals
+        must NEVER present them as enterprise approvals, and must NOT block an authenticated enterprise sign-off.
+        """
+        admin_key, analyst_key, approver_key = ("1" * 64, "2" * 64, "3" * 64)
+        with TemporaryDirectory() as directory:
+            accounts_file = Path(directory) / "enterprise_accounts.json"
+            accounts_file.write_text(json.dumps([
+                {
+                    "username": username,
+                    "role": role.value,
+                    "credential_digest": hashlib.sha256(key.encode("ascii")).hexdigest(),
+                }
+                for username, role, key in (
+                    ("enterprise-admin", Role.ADMINISTRATOR, admin_key),
+                    ("enterprise-analyst", Role.ANALYST, analyst_key),
+                    ("enterprise-approver", Role.APPROVER, approver_key),
+                )
+            ]), encoding="utf-8")
+
+            db_path = str(Path(directory) / "reused_enterprise.db")
+            initial_repo = TopologyRepository(db_path)
+            topology_id = "rtc-optical-asmgcs-spoof"
+
+            # 1. Simulate a run in development
+            sim_req = canonical_to_simulation_request(make_test_canonical(), {"topology_version": 1})
+            from backend.simpy_engine import run_cascade_simulation
+            sim_result = run_cascade_simulation(sim_req)
+            run_rec = initial_repo.record_run(topology_id, 1, sim_req, sim_result)
+            run_id = run_rec["run_id"]
+
+            # 2. Insert a pre-existing exercise approval and legacy approval into the reused database
+            with initial_repo._get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO dossier_approvals (
+                        run_id, approval_type, approver, approver_role, signoff_notes,
+                        run_sha256, topology_id, topology_version, authenticated_account
+                    )
+                    VALUES (?, 'legacy', 'Legacy Unproven Signoff', 'approver', 'Pre-migration sign-off',
+                            'legacy_hash_123', ?, 1, NULL);
+                    """,
+                    (run_id, topology_id),
+                )
+
+            # 3. Open this reused database under ENTERPRISE_MODE
+            with (
+                patch.dict(os.environ, {"ENTERPRISE_MODE": "true", "AEROCASCADE_ACCOUNTS_FILE": str(accounts_file)}),
+                patch.object(main, "repo", TopologyRepository(db_path)),
+                TestClient(app) as client,
+            ):
+                analyst = ("enterprise-analyst", analyst_key)
+                approver = ("enterprise-approver", approver_key)
+
+                # Check A: Run status lookup in enterprise mode does NOT return legacy as enterprise approval
+                run_res = client.get(f"/api/runs/{run_id}", auth=analyst)
+                self.assertEqual(run_res.status_code, 200)
+                run_data = run_res.json()
+                self.assertIsNone(run_data["approval"], "Legacy approval must not appear as enterprise approval")
+                self.assertEqual(run_data["approval_status"], "legacy_approved")
+                self.assertIn("legacy", run_data["all_approvals"])
+
+                # Check B: Export dossier in enterprise mode does NOT present legacy approval
+                export_res = client.get(
+                    f"/api/export/dossier?topology_id={topology_id}&topology_version=1&run_id={run_id}",
+                    auth=analyst,
+                )
+                self.assertEqual(export_res.status_code, 200)
+                export_data = export_res.json()
+                self.assertIsNone(export_data["approval"], "Legacy approval must not be exported as enterprise approval")
+
+                # Check C: Legacy approval does NOT block authenticated enterprise approver
+                enterprise_payload = {
+                    "topology_id": topology_id,
+                    "topology_version": 1,
+                    "run_id": run_id,
+                    "signoff_notes": "Official Enterprise Sign-off with authenticated provenance.",
+                    "approver_name": "Ignored Spoofed Name",
+                }
+                approve_res = client.post("/api/dossier/approve", json=enterprise_payload, auth=approver)
+                self.assertEqual(approve_res.status_code, 200, approve_res.text)
+                new_approval = approve_res.json()["approval"]
+                self.assertEqual(new_approval["approval_type"], "enterprise")
+                self.assertEqual(new_approval["approver"], "enterprise-approver")
+                self.assertEqual(new_approval["authenticated_account"], "enterprise-approver")
+                self.assertEqual(new_approval["signoff_notes"], "Official Enterprise Sign-off with authenticated provenance.")
+
+                # Check D: Re-lookup now returns the authenticated enterprise approval
+                run_after = client.get(f"/api/runs/{run_id}", auth=analyst).json()
+                self.assertIsNotNone(run_after["approval"])
+                self.assertEqual(run_after["approval"]["approval_type"], "enterprise")
+                self.assertEqual(run_after["approval"]["approver"], "enterprise-approver")
+                self.assertEqual(run_after["approval_status"], "enterprise_approved")
+
+                # Check E: Export now contains verified enterprise approval
+                export_after = client.get(
+                    f"/api/export/dossier?topology_id={topology_id}&topology_version=1&run_id={run_id}",
+                    auth=analyst,
+                ).json()
+                self.assertEqual(export_after["export_status"], "success")
+                self.assertIsNotNone(export_after["approval"])
+                self.assertEqual(export_after["approval"]["approval_type"], "enterprise")
+                self.assertEqual(export_after["approval"]["authenticated_account"], "enterprise-approver")
+                self.assertEqual(export_after["run_sha256"], new_approval["run_sha256"])
+
+
+    def test_enterprise_gateway_cannot_use_development_backend(self):
+        with patch.dict(os.environ, {"ENTERPRISE_MODE": "false"}):
+            response = self.client.get("/api/topologies", headers={"X-AeroCascade-Deployment": "enterprise"})
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(self.client.get("/api/topologies").status_code, 200)
 
     def test_enterprise_startup_requires_accounts(self):
         with (

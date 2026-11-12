@@ -1009,4 +1009,220 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(useCascadeStore.getState().importPreview, null);
     assert.equal(useCascadeStore.getState().importError, null);
   });
+
+  await t.test('Enterprise Dossier & Run Approval Workflow Suite', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      // 1. fetchUserSession
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/api/auth/session')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ username: 'test-analyst', role: 'analyst', enterprise: true }),
+          } as Response;
+        }
+        return { ok: false, status: 404 } as Response;
+      }) as typeof fetch;
+
+      await useCascadeStore.getState().fetchUserSession();
+      assert.deepEqual(useCascadeStore.getState().userSession, {
+        username: 'test-analyst',
+        role: 'analyst',
+        enterprise: true,
+      });
+
+      // 2. setActiveDevRole switches role
+      globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+        const urlStr = String(url);
+        const headers = (init?.headers || {}) as Record<string, string>;
+        if (urlStr.includes('/api/auth/session')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ username: 'synthetic-operator', role: headers['X-AeroCascade-Role'] || 'analyst', enterprise: false }),
+          } as Response;
+        }
+        if (urlStr.includes('/api/runs/')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              run_id: 'run-12345',
+              topology_id: 'topo-001',
+              topology_version: 1,
+              run_sha256: 'abc123sha256',
+              approval: null,
+            }),
+          } as Response;
+        }
+        return { ok: false, status: 404 } as Response;
+      }) as typeof fetch;
+
+      await useCascadeStore.getState().setActiveDevRole('approver');
+      assert.equal(useCascadeStore.getState().activeDevRole, 'approver');
+      assert.equal(useCascadeStore.getState().userSession?.role, 'approver');
+
+      // 3. fetchRunApprovalStatus sets persisted state
+      useCascadeStore.setState({
+        simulationResult: {
+          ...useCascadeStore.getState().simulationResult,
+          run_id: 'run-12345',
+          provenance: {
+            ...useCascadeStore.getState().simulationResult.provenance,
+            input_revision: useCascadeStore.getState().inputRevision,
+          },
+        },
+        currentTopologyVersion: 1,
+      });
+
+      await useCascadeStore.getState().fetchRunApprovalStatus('run-12345');
+      const serverState = useCascadeStore.getState().runServerState;
+      assert.equal(serverState?.isPersisted, true);
+      assert.equal(serverState?.isStale, false);
+      assert.equal(serverState?.runSha256, 'abc123sha256');
+      assert.equal(useCascadeStore.getState().runApproval, null);
+
+      // 4. Stale detection when inputRevision is modified
+      useCascadeStore.setState({ inputRevision: 999 });
+      await useCascadeStore.getState().fetchRunApprovalStatus('run-12345');
+      assert.equal(useCascadeStore.getState().runServerState?.isStale, true);
+
+      // 5. approveCurrentRun validation: empty signoff notes rejected
+      const emptyNotesRes = await useCascadeStore.getState().approveCurrentRun('   ');
+      assert.equal(emptyNotesRes, false);
+      assert.match(useCascadeStore.getState().dossierError || '', /Sign-off notes are required/);
+
+      // 6. approveCurrentRun validation: stale run rejected
+      const staleRes = await useCascadeStore.getState().approveCurrentRun('Approved for exercise audit');
+      assert.equal(staleRes, false);
+      assert.match(useCascadeStore.getState().dossierError || '', /Current workspace inputs have changed/);
+
+      // Reset revision to matching
+      useCascadeStore.setState({
+        inputRevision: useCascadeStore.getState().simulationResult.provenance?.input_revision ?? 1,
+        dossierError: null,
+      });
+
+      // 7. Role denial: 403 Forbidden
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/api/dossier/approve')) {
+          return {
+            ok: false,
+            status: 403,
+            json: async () => ({ detail: "Role 'analyst' is not authorized to perform 'approve'." }),
+          } as Response;
+        }
+        return { ok: false, status: 404 } as Response;
+      }) as typeof fetch;
+
+      useCascadeStore.setState({ activeDevRole: 'analyst', userSession: { username: 'analyst1', role: 'analyst', enterprise: false } });
+      const deniedRes = await useCascadeStore.getState().approveCurrentRun('Approved notes');
+      assert.equal(deniedRes, false);
+      assert.match(useCascadeStore.getState().dossierError || '', /Role denial/);
+
+      // 8. Conflict: already approved run (409)
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/api/dossier/approve')) {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({ detail: 'This run already has an approval.' }),
+          } as Response;
+        }
+        if (urlStr.includes('/api/runs/')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              run_id: 'run-12345',
+              topology_version: 1,
+              run_sha256: 'abc123sha256',
+              approval: {
+                approval_type: 'exercise',
+                approver: 'prior-approver',
+                approver_role: 'approver',
+                signoff_notes: 'Prior notes',
+                run_sha256: 'abc123sha256',
+                approved_at: '2026-11-11T20:00:00Z',
+              },
+            }),
+          } as Response;
+        }
+        return { ok: false, status: 404 } as Response;
+      }) as typeof fetch;
+
+      useCascadeStore.setState({ activeDevRole: 'approver', userSession: { username: 'approver1', role: 'approver', enterprise: false } });
+      const conflictRes = await useCascadeStore.getState().approveCurrentRun('Approved again');
+      assert.equal(conflictRes, false);
+      assert.match(useCascadeStore.getState().dossierError || '', /already has an exercise sign-off|already has an approval/);
+
+      // 9. Successful approval (200 OK)
+      const mockApprovalRecord: import('./useCascadeStore.ts').DossierApprovalRecord = {
+        run_id: 'run-12345',
+        approval_type: 'exercise',
+        approver: 'lead-safety-approver',
+        approver_role: 'approver',
+        signoff_notes: 'Reviewed in a synthetic exercise and verified tripartite controls.',
+        run_sha256: 'abc123sha256',
+        approved_at: '2026-11-11T22:00:00Z',
+      };
+
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/api/dossier/approve')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'approved', approval: mockApprovalRecord }),
+          } as Response;
+        }
+        if (urlStr.includes('/api/runs/')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              run_id: 'run-12345',
+              topology_version: 1,
+              run_sha256: 'abc123sha256',
+              approval: mockApprovalRecord,
+            }),
+          } as Response;
+        }
+        return { ok: false, status: 404 } as Response;
+      }) as typeof fetch;
+
+      const approveOk = await useCascadeStore.getState().approveCurrentRun('Reviewed in a synthetic exercise and verified tripartite controls.');
+      assert.equal(approveOk, true);
+      assert.equal(useCascadeStore.getState().dossierError, null);
+      assert.match(useCascadeStore.getState().dossierSuccessMessage || '', /successfully approved/);
+      assert.deepEqual(useCascadeStore.getState().runApproval, mockApprovalRecord);
+
+      // 10. downloadEvidenceJson export
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/api/export/dossier')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              export_status: 'success',
+              run: { run_id: 'run-12345' },
+              run_sha256: 'abc123sha256',
+              approval: mockApprovalRecord,
+            }),
+          } as Response;
+        }
+        return { ok: false, status: 404 } as Response;
+      }) as typeof fetch;
+
+      const exportOk = await useCascadeStore.getState().downloadEvidenceJson();
+      assert.equal(exportOk, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

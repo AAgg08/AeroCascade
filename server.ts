@@ -41,6 +41,7 @@ async function startServer() {
 
       const headers: Record<string, string> = {
         Accept: 'application/json',
+        ...(enterpriseMode ? { 'X-AeroCascade-Deployment': 'enterprise' } : {}),
       };
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         headers['Content-Type'] = 'application/json';
@@ -302,7 +303,10 @@ async function startServer() {
       if (enterpriseMode) {
         try {
           const session = await fetch(`${PYTHON_BACKEND_URL}/api/auth/session`, {
-            headers: { Authorization: req.get('Authorization') ?? '' },
+            headers: {
+              Authorization: req.get('Authorization') ?? '',
+              'X-AeroCascade-Deployment': 'enterprise',
+            },
             signal: AbortSignal.timeout(5000),
           });
           if (session.status === 401) {
@@ -310,7 +314,9 @@ async function startServer() {
             if (challenge) res.setHeader('WWW-Authenticate', challenge);
             return res.status(401).send('Sign in with your AeroCascade account.');
           }
-          if (!session.ok) return res.status(503).send('Authentication service unavailable.');
+          if (!session.ok || (await session.json())?.enterprise !== true) {
+            return res.status(503).send('Authentication service unavailable.');
+          }
         } catch {
           return res.status(503).send('Authentication service unavailable.');
         }

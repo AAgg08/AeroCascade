@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, status, Request, Response, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import networkx as nx
 
@@ -80,6 +81,14 @@ if not is_enterprise_mode():
         allow_headers=["*"],
     )
 
+
+@app.middleware("http")
+async def require_matching_deployment(request: Request, call_next):
+    if request.headers.get("X-AeroCascade-Deployment") == "enterprise" and not is_enterprise_mode():
+        return JSONResponse(status_code=503, content={"detail": "Enterprise backend is unavailable."})
+    return await call_next(request)
+
+
 repo = TopologyRepository()
 
 
@@ -119,8 +128,14 @@ def health_check() -> dict:
 
 
 @app.get("/api/auth/session")
-def get_enterprise_session(account: Account = Depends(get_authenticated_account)) -> dict:
-    return {"username": account.username, "role": account.role.value}
+def get_enterprise_session(
+    request: Request,
+    role: Role = Depends(get_authenticated_role),
+) -> dict:
+    if is_enterprise_mode():
+        account = get_authenticated_account(request)
+        return {"username": account.username, "role": account.role.value, "enterprise": True}
+    return {"username": "synthetic-operator", "role": role.value, "enterprise": False}
 
 
 @app.post("/api/simulate", response_model=SimulationResponse)
@@ -128,23 +143,34 @@ def simulate_cascade(
     payload: SimulationRequest,
     _role: Role = Depends(require_role(Action.RUN)),
 ) -> SimulationResponse:
-    try:
-        res = run_cascade_simulation(payload)
-        # If payload specifies a known topology_id, attempt to record the run against that version
+    enterprise = is_enterprise_mode()
+    target_version = payload.topology_version
+    if enterprise:
+        if target_version is None:
+            raise HTTPException(status_code=422, detail="A saved topology version is required in enterprise mode.")
         try:
-            topo = repo.get_topology(payload.scenario_id)
-            if topo:
-                # Find matching version or default to input_revision / current_version
-                target_ver = payload.input_revision if payload.input_revision <= topo["current_version"] else topo["current_version"]
-                repo.record_run(payload.scenario_id, target_ver, payload, res)
-        except Exception:
-            # If scenario_id is not in repository (or custom run), simulation still succeeds
-            pass
-        return res
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Simulation engine error: {str(e)}")
+            repo.get_version(payload.scenario_id, target_version)
+        except TopologyNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        result = run_cascade_simulation(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if enterprise:
+        assert target_version is not None
+        repo.record_run(payload.scenario_id, target_version, payload, result)
+        return result
+
+    # Development simulations can run without a saved topology.
+    try:
+        topology = repo.get_topology(payload.scenario_id)
+        version = target_version or min(payload.input_revision, topology["current_version"])
+        repo.record_run(payload.scenario_id, version, payload, result)
+    except TopologyNotFoundError:
+        pass
+    return result
 
 
 @app.post("/api/topology/centrality")
@@ -258,7 +284,29 @@ def list_runs(
 @app.get("/api/runs/{run_id}", dependencies=[Depends(get_authenticated_role)])
 def get_run(run_id: str) -> dict:
     try:
-        return repo.get_run(run_id)
+        run = repo.get_run(run_id)
+        run_sha256 = dossier_run_hash(run)
+        all_approvals = repo.get_all_run_approvals(run_id)
+        enterprise_mode = is_enterprise_mode()
+
+        if enterprise_mode:
+            # In enterprise mode, only an authenticated enterprise approval is authoritative
+            approval = all_approvals.get("enterprise")
+        else:
+            # In dev mode, return exercise approval if available, else legacy, else enterprise
+            approval = all_approvals.get("exercise") or all_approvals.get("legacy") or all_approvals.get("enterprise")
+
+        return {
+            **run,
+            "approval": approval,
+            "all_approvals": all_approvals,
+            "run_sha256": run_sha256,
+            "approval_status": (
+                "enterprise_approved"
+                if all_approvals.get("enterprise")
+                else ("exercise_approved" if all_approvals.get("exercise") else ("legacy_approved" if all_approvals.get("legacy") else "unapproved"))
+            ),
+        }
     except TopologyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -416,11 +464,43 @@ def approve_dossier(
             raise HTTPException(status_code=422, detail="A persisted run ID is required.")
         account = get_authenticated_account(request)
         run = dossier_run(body.run_id, body.topology_id, body.topology_version)
+        if run["resolved_input"].get("topology_version") != run["topology_version"]:
+            raise HTTPException(status_code=409, detail="Re-run with an explicit saved topology version before approval.")
+        digest = dossier_run_hash(run)
         approval = repo.approve_run(
-            body.run_id, account.username, account.role.value, body.signoff_notes, dossier_run_hash(run)
+            run_id=body.run_id,
+            approver=account.username,
+            approver_role=account.role.value,
+            notes=body.signoff_notes,
+            run_sha256=digest,
+            approval_type="enterprise",
+            topology_id=run["topology_id"],
+            topology_version=run["topology_version"],
+            authenticated_account=account.username,
         )
         if approval is None:
-            raise HTTPException(status_code=409, detail="This run already has an approval.")
+            raise HTTPException(status_code=409, detail="This run already has an authenticated enterprise approval.")
+        return {"status": "approved", "approval": approval}
+
+    if body.run_id:
+        run = dossier_run(body.run_id, body.topology_id, body.topology_version)
+        if run["resolved_input"].get("topology_version") != run["topology_version"]:
+            raise HTTPException(status_code=409, detail="Re-run with an explicit saved topology version before approval.")
+        digest = dossier_run_hash(run)
+        approver_name = body.approver_name or "Exercise Approver"
+        approval = repo.approve_run(
+            run_id=body.run_id,
+            approver=approver_name,
+            approver_role=_role.value,
+            notes=body.signoff_notes,
+            run_sha256=digest,
+            approval_type="exercise",
+            topology_id=run["topology_id"],
+            topology_version=run["topology_version"],
+            authenticated_account=None,
+        )
+        if approval is None:
+            raise HTTPException(status_code=409, detail="This run already has an exercise sign-off.")
         return {"status": "approved", "approval": approval}
 
     return {
@@ -445,7 +525,8 @@ def export_dossier(
             raise HTTPException(status_code=422, detail="A persisted run ID is required.")
         run = dossier_run(run_id, topology_id, topology_version)
         digest = dossier_run_hash(run)
-        approval = repo.get_run_approval(run_id)
+        # In enterprise mode, strictly query authenticated enterprise approvals
+        approval = repo.get_run_approval(run_id, approval_type="enterprise")
         if approval and approval["run_sha256"] != digest:
             raise HTTPException(status_code=409, detail="Run integrity check failed.")
         return {
@@ -454,6 +535,23 @@ def export_dossier(
             "run_sha256": digest,
             "approval": approval,
         }
+    if run_id:
+        try:
+            run = dossier_run(run_id, topology_id, topology_version)
+            digest = dossier_run_hash(run)
+            approval = repo.get_run_approval(run_id)
+            if approval and approval["run_sha256"] != digest:
+                raise HTTPException(status_code=409, detail="Run integrity check failed.")
+            return {
+                "export_status": "success",
+                "topology_id": topology_id,
+                "topology_version": topology_version or run["topology_version"],
+                "run": run,
+                "run_sha256": digest,
+                "approval": approval,
+            }
+        except TopologyNotFoundError:
+            pass
     try:
         topo = repo.get_topology(topology_id)
     except TopologyNotFoundError as exc:
@@ -464,6 +562,7 @@ def export_dossier(
         "topology_name": topo["name"],
         "version": topology_version or topo["current_version"],
         "exported_by_role": _role.value,
+        "dossier": "Synthetic evidence bundle generated for exercise purposes.",
     }
 
 

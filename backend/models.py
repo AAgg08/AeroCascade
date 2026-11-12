@@ -282,6 +282,7 @@ class ResultProvenance(BaseModel):
 
 class SimulationRequest(BaseModel):
     scenario_id: str
+    topology_version: Optional[int] = Field(default=None, ge=1)
     horizon_hours: int = Field(default=24, ge=1, le=168)
     baseline_movements_per_hour: int = Field(default=48, ge=1, le=240)
     trigger_hour: int = Field(default=4, ge=0, le=168)
