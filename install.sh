@@ -25,6 +25,11 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "${AEROCASCADE_ACCOUNTS_FILE:-}" != /* ]] || [ ! -f "$AEROCASCADE_ACCOUNTS_FILE" ]; then
+  echo "Set AEROCASCADE_ACCOUNTS_FILE to the absolute path of the provisioned accounts file. See docs/RUNBOOK.md." >&2
+  exit 1
+fi
+
 # Step 2: Cryptographic Checksum Verification
 echo "[2/5] Verifying integrity with release/SHA256SUMS..."
 if [ ! -f "release/SHA256SUMS" ]; then
@@ -37,7 +42,8 @@ if command -v sha256sum >/dev/null 2>&1; then
 elif command -v shasum >/dev/null 2>&1; then
   shasum -a 256 -c release/SHA256SUMS
 else
-  echo "Warning: sha256sum/shasum not found on host; skipping checksum verification."
+  echo "Error: install requires sha256sum or shasum to verify the bundle." >&2
+  exit 1
 fi
 
 # Step 3: Load Pinned Container Images into Local Docker Daemon
@@ -99,5 +105,6 @@ if [ $HEALTHY -eq 1 ]; then
   echo " Documentation:    docs/RUNBOOK.md"
   echo "============================================================"
 else
-  echo "Warning: Healthcheck timed out. Check container logs with 'docker compose logs'."
+  echo "Error: Healthcheck timed out. Check container logs with 'docker compose logs'." >&2
+  exit 1
 fi

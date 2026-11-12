@@ -10,8 +10,21 @@ import {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  const HOST = process.env.HOST || '0.0.0.0';
+  const enterpriseMode = /^(1|true|yes|enabled)$/i.test(process.env.ENTERPRISE_MODE?.trim() ?? '');
 
+  if (enterpriseMode) {
+    app.use((req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store');
+      const fetchSite = req.get('Sec-Fetch-Site');
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) &&
+          fetchSite && !['same-origin', 'none'].includes(fetchSite)) {
+        return res.status(403).json({ error: 'Cross-origin request denied' });
+      }
+      next();
+    });
+  }
   app.use(express.json({ limit: '5mb' }));
 
   const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:8000';
@@ -35,7 +48,7 @@ async function startServer() {
       if (req.headers['authorization']) {
         headers['Authorization'] = String(req.headers['authorization']);
       }
-      if (req.headers['x-aerocascade-role']) {
+      if (!enterpriseMode && req.headers['x-aerocascade-role']) {
         headers['X-AeroCascade-Role'] = String(req.headers['x-aerocascade-role']);
       }
 
@@ -59,6 +72,8 @@ async function startServer() {
         signal: controller.signal,
       });
 
+      const challenge = response.headers.get('www-authenticate');
+      if (challenge) res.setHeader('WWW-Authenticate', challenge);
       if (response.ok) {
         res.setHeader('X-Backend-Engine', 'FastAPI-Python');
         const contentType = response.headers.get('content-type') || '';
@@ -80,7 +95,7 @@ async function startServer() {
       } else {
         const errJson = await response.json().catch(() => null);
         const errDetail = errJson?.detail || (await response.text().catch(() => ''));
-        console.warn(`[Proxy] Python backend returned ${response.status} for ${req.originalUrl}. Detail: ${String(errDetail).slice(0, 160)}`);
+        if (!enterpriseMode) console.warn(`[Proxy] Python backend returned ${response.status} for ${req.path}`);
         if (
           response.status === 400 ||
           response.status === 401 ||
@@ -103,7 +118,7 @@ async function startServer() {
   app.get('/api/health', async (req, res) => {
     await proxyToPythonBackend(req, res, (reason) => {
       res.setHeader('X-Backend-Engine', 'TypeScript-Gateway');
-      res.status(200).json({
+      res.status(enterpriseMode ? 503 : 200).json({
         status: 'degraded',
         engine: 'AeroCascade Gateway (Python Backend Offline)',
         python_status: 'offline',
@@ -118,6 +133,10 @@ async function startServer() {
     });
   });
 
+  app.get('/api/auth/session', async (req, res) => {
+    await proxyToPythonBackend(req, res, () => res.status(503).json({ error: 'Authentication service unavailable' }));
+  });
+
   app.get('/api/scenarios', (_req, res) => {
     res.json({ scenarios: SCENARIO_PRESETS });
   });
@@ -128,7 +147,8 @@ async function startServer() {
       return res.status(400).json({ error: 'Node list cannot be empty for simulation' });
     }
 
-    const allowLegacyDemo = req.query.allow_legacy_demo === 'true' || req.headers['x-allow-legacy-demo'] === 'true';
+    const allowLegacyDemo = !enterpriseMode &&
+      (req.query.allow_legacy_demo === 'true' || req.headers['x-allow-legacy-demo'] === 'true');
 
     await proxyToPythonBackend(req, res, (fallbackReason) => {
       if (!allowLegacyDemo) {
@@ -176,7 +196,8 @@ async function startServer() {
       return res.status(400).json({ error: 'Node list cannot be empty for topology analysis' });
     }
 
-    const allowLegacyDemo = req.query.allow_legacy_demo === 'true' || req.headers['x-allow-legacy-demo'] === 'true';
+    const allowLegacyDemo = !enterpriseMode &&
+      (req.query.allow_legacy_demo === 'true' || req.headers['x-allow-legacy-demo'] === 'true');
 
     await proxyToPythonBackend(req, res, (fallbackReason) => {
       if (!allowLegacyDemo) {
@@ -241,7 +262,7 @@ async function startServer() {
   });
 
   app.get('/api/backend-source', (_req, res) => {
-    if (process.env.ENTERPRISE_MODE === 'true' || process.env.NODE_ENV === 'production') {
+    if (enterpriseMode || process.env.NODE_ENV === 'production') {
       return res.status(403).json({
         error: 'Backend source viewer is disabled in the enterprise profile.',
       });
@@ -272,13 +293,33 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    if (enterpriseMode) {
+      app.use('/assets', express.static(path.join(distPath, 'assets')));
+    } else {
+      app.use(express.static(distPath));
+    }
+    app.get('*', async (req, res) => {
+      if (enterpriseMode) {
+        try {
+          const session = await fetch(`${PYTHON_BACKEND_URL}/api/auth/session`, {
+            headers: { Authorization: req.get('Authorization') ?? '' },
+            signal: AbortSignal.timeout(5000),
+          });
+          if (session.status === 401) {
+            const challenge = session.headers.get('WWW-Authenticate');
+            if (challenge) res.setHeader('WWW-Authenticate', challenge);
+            return res.status(401).send('Sign in with your AeroCascade account.');
+          }
+          if (!session.ok) return res.status(503).send('Authentication service unavailable.');
+        } catch {
+          return res.status(503).send('Authentication service unavailable.');
+        }
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, HOST, () => {
     console.log(`AeroCascade server listening on http://localhost:${PORT}`);
   });
 }

@@ -84,7 +84,21 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_versions_topology ON topology_versions(topology_id);
         CREATE INDEX IF NOT EXISTS idx_runs_topology_version ON simulation_runs(topology_id, topology_version);
         """
-    )
+    ),
+    (
+        2,
+        "002_dossier_approvals",
+        """
+        CREATE TABLE IF NOT EXISTS dossier_approvals (
+            run_id TEXT PRIMARY KEY REFERENCES simulation_runs(run_id) ON DELETE CASCADE,
+            approver TEXT NOT NULL,
+            approver_role TEXT NOT NULL,
+            signoff_notes TEXT NOT NULL,
+            run_sha256 TEXT NOT NULL,
+            approved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        """
+    ),
 ]
 
 
@@ -539,6 +553,27 @@ class TopologyRepository:
                 "resolved_input": json.loads(row["resolved_input"]),
                 "result": json.loads(row["result"]),
             }
+
+    def approve_run(
+        self, run_id: str, approver: str, approver_role: str, notes: str, run_sha256: str
+    ) -> Optional[Dict[str, Any]]:
+        """Store one immutable approval per run. Return None if it was already approved."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO dossier_approvals (run_id, approver, approver_role, signoff_notes, run_sha256)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (run_id) DO NOTHING
+                RETURNING *;
+                """,
+                (run_id, approver, approver_role, notes, run_sha256),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_run_approval(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM dossier_approvals WHERE run_id = ?;", (run_id,)).fetchone()
+        return dict(row) if row else None
 
     def backup_database(self, backup_path: str) -> None:
         """Creates a consistent online SQLite backup at backup_path."""

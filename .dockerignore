@@ -1,0 +1,14 @@
+.git
+.agents
+.codex
+.aws
+node_modules
+dist
+dist-server
+release
+data
+backups
+**/.venv
+**/__pycache__
+**/.env*
+**/*.db*

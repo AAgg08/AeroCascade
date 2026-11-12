@@ -51,7 +51,7 @@ AeroCascade is packaged for standalone, air-gapped on-premise operation within c
 
 ## 2. Air-Gapped Release Bundle & Checksum Verification
 
-The release bundle is delivered as a self-contained offline directory with signed checksums and an SBOM.
+The release bundle is delivered as a self-contained offline directory with SHA-256 checksums and an SBOM.
 
 ### 2.1 Bundle Contents
 - `docker-compose.yml`: Hardened service definition with `pull_policy: never`.
@@ -224,7 +224,7 @@ server {
 
 ## 7. Role-Based Access Control (RBAC) & Enterprise Security
 
-AeroCascade enforces role-based access control server-side on both the Express gateway and FastAPI backend.
+The Express gateway prompts for credentials. FastAPI authenticates named accounts and enforces the role permissions.
 
 ### 7.1 Role Permissions Matrix
 
@@ -240,18 +240,28 @@ AeroCascade enforces role-based access control server-side on both the Express g
 | **Manage & Backups** | `POST /api/admin/*` | Allowed | Denied (403) | Denied (403) | Denied (403) |
 | **Source Viewer** | `GET /api/backend-source` | Disabled (403)| Disabled (403)| Disabled (403)| Disabled (403)|
 
-### 7.2 Supplying Roles & Authentication
-Requests can provide credentials via either:
-1. `X-AeroCascade-Role` header (`administrator`, `analyst`, `reviewer`, `approver`).
-2. `Authorization: Bearer <token>` matching pre-shared keys configured via environment variables:
-   - `AEROCASCADE_ADMIN_KEY`
-   - `AEROCASCADE_ANALYST_KEY`
-   - `AEROCASCADE_REVIEWER_KEY`
-   - `AEROCASCADE_APPROVER_KEY`
+### 7.2 Provisioning enterprise accounts
 
-In Enterprise Mode (`ENTERPRISE_MODE=true`), unauthenticated requests without valid roles receive `401 Unauthorized`. Forbidden operations receive `403 Forbidden`.
+On the target host, generate a named account and login key for each operator. Run the command in a private terminal because it displays the keys once. Store the accounts file outside the release bundle and distribute each key through the organization's approved credential channel.
 
-### 7.3 Redacted Audit Logging
+```bash
+python3 scripts/provision_accounts.py /secure/aerocascade-accounts.json \
+  operations-admin:administrator duty-analyst:analyst safety-approver:approver
+sudo chgrp 10001 /secure/aerocascade-accounts.json
+chmod 0640 /secure/aerocascade-accounts.json
+export AEROCASCADE_ACCOUNTS_FILE=/secure/aerocascade-accounts.json
+./install.sh
+```
+
+FastAPI validates the accounts file at startup. The container mounts it read-only and needs group read access for GID 10001. Open the loopback URL and enter the named account and its key in the browser's sign-in prompt. The browser retains HTTP Basic credentials during its session. Use a private browser window on shared consoles and close it when finished. Any off-host access requires an organization-managed TLS reverse proxy. A missing or invalid account receives HTTP 401. An authenticated account without the required role receives HTTP 403.
+
+To revoke a user, remove the entry from the file and recreate the backend service to load the updated mount. Keep at least one administrator. For rotation, provision a new file, transfer the new keys securely, and recreate the backend service. The development role header is available only outside enterprise mode.
+
+### 7.3 Run evidence
+
+Enterprise dossier approval requires the persisted run ID and matching topology version. FastAPI records the account name, role, UTC approval time, notes, and SHA-256 digest of the stored run. The dossier export API returns the run evidence and its approval, if recorded. The digest detects a mismatch against the stored approval. It does not provide a digital signature or an external trusted timestamp.
+
+### 7.4 Redacted Audit Logging
 Audit logs record all authorized (`SECURITY_ALLOW`) and forbidden (`SECURITY_DENY`) actions. To comply with confidential infrastructure protection, logs **never** output raw topology data, cell values, or sensitive airport dossiers:
 ```
 SECURITY_ALLOW: action=run role=analyst path=/api/simulate client=127.0.0.1
@@ -270,9 +280,8 @@ Execute the CLI utility or API:
 # Via CLI:
 ./scripts/backup_restore.py backup --db ./data/aerocascade.db --out ./backups/aerocascade_backup_$(date +%Y%m%d_%H%M%S).db
 
-# Via API (Administrator token required):
-curl -X POST http://127.0.0.1:3000/api/admin/backup \
-  -H "X-AeroCascade-Role: administrator"
+# Via API (curl prompts for the named administrator's login key):
+curl --user operations-admin -X POST http://127.0.0.1:3000/api/admin/backup
 ```
 
 ### 8.2 Restoring from Backup

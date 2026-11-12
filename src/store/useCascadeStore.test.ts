@@ -631,6 +631,30 @@ test('Store Lifecycle & Concurrency Suite', async (t) => {
     assert.equal(useCascadeStore.getState().costPerDelayedMovement, 0, 'Negative values must be clamped to 0');
   });
 
+  await t.test('Disruption Cost View & Queue Economics State: configurable currency, cost per flight-hour, and implementation cost', async () => {
+    const store = useCascadeStore.getState();
+    assert.equal(typeof store.disruptionCurrency, 'string');
+    assert.equal(store.costPerFlightHour, null, 'costPerFlightHour must default to null (blank output)');
+    assert.equal(store.implementationCost, null, 'implementationCost must default to null');
+    assert.equal(store.initialQueueBacklog, 0, 'initialQueueBacklog must default to 0');
+
+    // Update settings
+    store.setDisruptionCurrency('EUR');
+    store.setCostPerFlightHour(2500);
+    store.setImplementationCost(100000);
+    store.setInitialQueueBacklog(5);
+
+    const updated = useCascadeStore.getState();
+    assert.equal(updated.disruptionCurrency, 'EUR');
+    assert.equal(updated.costPerFlightHour, 2500);
+    assert.equal(updated.implementationCost, 100000);
+    assert.equal(updated.initialQueueBacklog, 5);
+
+    // Resetting to null / blank
+    store.setCostPerFlightHour(null);
+    assert.equal(useCascadeStore.getState().costPerFlightHour, null, 'Resetting rate to null must restore blank output');
+  });
+
   await t.test('Dagre layout spacing: columns expanded (+40px) and vertical nodes spaced (+25px)', async () => {
     const scenario = SCENARIO_PRESETS[0];
     const centralityMap = Object.fromEntries(

@@ -6,12 +6,18 @@ Unit and integration tests for AeroCascade Enterprise Security & RBAC:
 - Enterprise profile enforcement: authentication required (401), source viewer disabled (403)
 """
 
+import hashlib
 import json
 import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
+from backend import main
 from backend.main import app
+from backend.repository import TopologyRepository
 from backend.security import Role
 from backend.canonical import (
     CanonicalNode,
@@ -293,6 +299,79 @@ class TestSecurityRBAC(unittest.TestCase):
                 os.environ.pop("ENTERPRISE_MODE", None)
             else:
                 os.environ["ENTERPRISE_MODE"] = old_env
+
+
+    def test_enterprise_named_accounts_and_run_approval(self):
+        admin_key, analyst_key, approver_key = ("a" * 64, "b" * 64, "c" * 64)
+        with TemporaryDirectory() as directory:
+            accounts_file = Path(directory) / "accounts.json"
+            accounts_file.write_text(json.dumps([
+                {
+                    "username": username,
+                    "role": role.value,
+                    "credential_digest": hashlib.sha256(key.encode("ascii")).hexdigest(),
+                }
+                for username, role, key in (
+                    ("test-admin", Role.ADMINISTRATOR, admin_key),
+                    ("test-analyst", Role.ANALYST, analyst_key),
+                    ("test-approver", Role.APPROVER, approver_key),
+                )
+            ]), encoding="utf-8")
+            db_path = str(Path(directory) / "enterprise.db")
+            with (
+                patch.dict(os.environ, {"ENTERPRISE_MODE": "true", "AEROCASCADE_ACCOUNTS_FILE": str(accounts_file)}),
+                patch.object(main, "repo", TopologyRepository(db_path)),
+                TestClient(app) as client,
+            ):
+                for endpoint in ("/api/topologies", "/api/runs", "/api/auth/session"):
+                    response = client.get(endpoint, headers={"X-AeroCascade-Role": Role.ADMINISTRATOR.value})
+                    self.assertEqual(response.status_code, 401)
+                    self.assertTrue(response.headers["WWW-Authenticate"].startswith("Basic"))
+                analyst = ("test-analyst", analyst_key)
+                approver = ("test-approver", approver_key)
+                self.assertEqual(client.get("/api/auth/session", auth=analyst).json()["role"], "analyst")
+
+                topology_id = "rtc-optical-asmgcs-spoof"
+                request = canonical_to_simulation_request(make_test_canonical())
+                response = client.post("/api/simulate", json=request.model_dump(mode="json"), auth=analyst)
+                self.assertEqual(response.status_code, 200, response.text)
+                run_id = response.json()["run_id"]
+                payload = {
+                    "topology_id": topology_id,
+                    "topology_version": 1,
+                    "run_id": run_id,
+                    "signoff_notes": "Reviewed in a synthetic exercise.",
+                    "approver_name": "Ignored caller-supplied name",
+                }
+                self.assertEqual(client.post("/api/dossier/approve", json=payload, auth=analyst).status_code, 403)
+                wrong_version = {**payload, "topology_version": 2}
+                self.assertEqual(client.post("/api/dossier/approve", json=wrong_version, auth=approver).status_code, 409)
+                approved = client.post("/api/dossier/approve", json=payload, auth=approver)
+                self.assertEqual(approved.status_code, 200, approved.text)
+                approval = approved.json()["approval"]
+                self.assertEqual(approval["approver"], "test-approver")
+                self.assertEqual(TopologyRepository(db_path).get_run_approval(run_id), approval)
+                self.assertEqual(client.post("/api/dossier/approve", json=payload, auth=approver).status_code, 409)
+
+                params = {"topology_id": topology_id, "run_id": run_id}
+                exported = client.get("/api/export/dossier", params=params, auth=analyst)
+                self.assertEqual(exported.status_code, 200, exported.text)
+                evidence = exported.json()
+                self.assertEqual(evidence["run"]["run_id"], run_id)
+                self.assertEqual(evidence["run_sha256"], approval["run_sha256"])
+                self.assertEqual(evidence["approval"], approval)
+
+                with main.repo._get_connection() as conn:
+                    conn.execute("UPDATE simulation_runs SET result = '{}' WHERE run_id = ?", (run_id,))
+                self.assertEqual(client.get("/api/export/dossier", params=params, auth=analyst).status_code, 409)
+
+    def test_enterprise_startup_requires_accounts(self):
+        with (
+            patch.dict(os.environ, {"ENTERPRISE_MODE": "true", "AEROCASCADE_ACCOUNTS_FILE": ""}),
+            self.assertRaisesRegex(RuntimeError, "Set AEROCASCADE_ACCOUNTS_FILE"),
+            TestClient(app),
+        ):
+            pass
 
 
 if __name__ == "__main__":

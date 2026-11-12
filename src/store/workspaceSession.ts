@@ -9,6 +9,10 @@ export interface WorkspaceSettings {
   baselineMovementsPerHour: number;
   triggerHour: number;
   costPerDelayedMovement: number;
+  disruptionCurrency?: string;
+  costPerFlightHour?: number | null;
+  implementationCost?: number | null;
+  initialQueueBacklog?: number;
   nodes: SystemNodeModel[];
 }
 
@@ -59,27 +63,45 @@ export function parseWorkspace(text: string): WorkspaceSettings | null {
         psoe_status: node.psoe_status as PSOELevel,
       });
     }
-    return {
+    const res: WorkspaceSettings = {
       activeScenarioId: preset.id,
       baselineMovementsPerHour: value.baselineMovementsPerHour,
       triggerHour: value.triggerHour,
       costPerDelayedMovement: value.costPerDelayedMovement,
       nodes: structuredClone(preset.nodes).map((node) => ({ ...node, ...settings.get(node.id)! })),
     };
+    if (typeof value.disruptionCurrency === 'string' && value.disruptionCurrency.trim().length > 0) {
+      res.disruptionCurrency = value.disruptionCurrency.trim().toUpperCase();
+    }
+    if (value.costPerFlightHour !== undefined && (value.costPerFlightHour === null || inRange(value.costPerFlightHour, 0, Number.MAX_SAFE_INTEGER))) {
+      res.costPerFlightHour = value.costPerFlightHour;
+    }
+    if (value.implementationCost !== undefined && (value.implementationCost === null || inRange(value.implementationCost, 0, Number.MAX_SAFE_INTEGER))) {
+      res.implementationCost = value.implementationCost;
+    }
+    if (inRange(value.initialQueueBacklog, 0, 10000)) {
+      res.initialQueueBacklog = value.initialQueueBacklog;
+    }
+    return res;
   } catch {
     return null;
   }
 }
 
 export function serializeWorkspace(settings: WorkspaceSettings): string {
-  return JSON.stringify({
+  const payload: Record<string, unknown> = {
     version: 1,
     activeScenarioId: settings.activeScenarioId,
     baselineMovementsPerHour: settings.baselineMovementsPerHour,
     triggerHour: settings.triggerHour,
     costPerDelayedMovement: settings.costPerDelayedMovement,
     nodes: settings.nodes.map(({ id, tripartite, fmea, psoe_status }) => ({ id, tripartite, fmea, psoe_status })),
-  });
+  };
+  if (settings.disruptionCurrency !== undefined) payload.disruptionCurrency = settings.disruptionCurrency;
+  if (settings.costPerFlightHour !== undefined) payload.costPerFlightHour = settings.costPerFlightHour;
+  if (settings.implementationCost !== undefined) payload.implementationCost = settings.implementationCost;
+  if (settings.initialQueueBacklog !== undefined) payload.initialQueueBacklog = settings.initialQueueBacklog;
+  return JSON.stringify(payload);
 }
 
 export function loadWorkspace(storage: Pick<Storage, 'getItem'> | undefined) {

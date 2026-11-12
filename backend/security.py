@@ -14,10 +14,18 @@ Features:
 """
 
 from __future__ import annotations
+import base64
+import binascii
 import enum
+import hashlib
+import hmac
+import json
 import logging
 import os
-from typing import List, Optional
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 from fastapi import Depends, Header, HTTPException, Request, status
 
 logger = logging.getLogger("aerocascade.security")
@@ -60,59 +68,92 @@ def is_enterprise_mode() -> bool:
     return val in ("1", "true", "yes", "enabled")
 
 
+@dataclass(frozen=True)
+class Account:
+    username: str
+    role: Role
+    credential_digest: str
+
+
+def load_enterprise_accounts() -> dict[str, Account]:
+    """Load named accounts with SHA-256 digests of randomly generated 256-bit keys."""
+    filename = os.environ.get("AEROCASCADE_ACCOUNTS_FILE")
+    if not filename:
+        raise RuntimeError("Set AEROCASCADE_ACCOUNTS_FILE before starting enterprise mode.")
+    try:
+        entries = json.loads(Path(filename).read_text(encoding="utf-8"))
+        accounts: dict[str, Account] = {}
+        digests: set[str] = set()
+        if not isinstance(entries, list):
+            raise ValueError()
+        for entry in entries:
+            username = entry["username"]
+            digest = entry["credential_digest"]
+            if (
+                not re.fullmatch(r"[a-zA-Z0-9_.@-]{1,128}", username)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or username in accounts
+                or digest in digests
+            ):
+                raise ValueError()
+            accounts[username] = Account(username, Role(entry["role"]), digest)
+            digests.add(digest)
+        if not any(account.role == Role.ADMINISTRATOR for account in accounts.values()):
+            raise ValueError()
+        return accounts
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("Invalid enterprise accounts file. Configure unique accounts and at least one administrator.") from exc
+
+
+def get_authenticated_account(request: Request) -> Account:
+    header = request.headers.get("authorization", "")
+    scheme, _, encoded = header.partition(" ")
+    if scheme.lower() == "basic" and len(encoded) <= 512:
+        try:
+            decoded = base64.b64decode(encoded, validate=True).decode("ascii")
+            username, separator, credential = decoded.partition(":")
+            account = getattr(request.app.state, "enterprise_accounts", {}).get(username)
+            if separator and account and re.fullmatch(r"[0-9a-f]{64}", credential):
+                digest = hashlib.sha256(credential.encode("ascii")).hexdigest()
+                if hmac.compare_digest(digest, account.credential_digest):
+                    return account
+        except (binascii.Error, UnicodeError):
+            pass
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Valid enterprise account credentials are required.",
+        headers={"WWW-Authenticate": 'Basic realm="AeroCascade", charset="UTF-8"'},
+    )
+
+
 def get_authenticated_role(
+    request: Request,
     x_aerocascade_role: Optional[str] = Header(None, alias="X-AeroCascade-Role"),
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ) -> Role:
-    """
-    Extracts and authenticates the caller's role from headers or environment API keys.
-    In enterprise mode, valid role authentication is strictly required.
-    """
-    # 1. Check API token / key against configured secrets
-    token = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:].strip()
-    elif x_api_key:
-        token = x_api_key.strip()
-
-    admin_key = os.environ.get("AEROCASCADE_ADMIN_KEY", "aerocascade-admin-token")
-    analyst_key = os.environ.get("AEROCASCADE_ANALYST_KEY", "aerocascade-analyst-token")
-    reviewer_key = os.environ.get("AEROCASCADE_REVIEWER_KEY", "aerocascade-reviewer-token")
-    approver_key = os.environ.get("AEROCASCADE_APPROVER_KEY", "aerocascade-approver-token")
-
-    if token:
-        if token == admin_key:
-            return Role.ADMINISTRATOR
-        elif token == analyst_key:
-            return Role.ANALYST
-        elif token == reviewer_key:
-            return Role.REVIEWER
-        elif token == approver_key:
-            return Role.APPROVER
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API credentials or token.",
-            )
-
-    # 2. Check X-AeroCascade-Role header
-    if x_aerocascade_role:
-        role_str = x_aerocascade_role.strip().lower()
-        for r in Role:
-            if r.value == role_str:
-                return r
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown role '{x_aerocascade_role}'. Supported roles: {[r.value for r in Role]}.",
-        )
-
-    # 3. Fallback behavior: in Enterprise mode require authentication; in dev default to analyst
     if is_enterprise_mode():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required in enterprise profile. Provide credentials via X-AeroCascade-Role or Authorization Bearer token.",
-        )
+        return get_authenticated_account(request).role
+
+    scheme, _, value = (authorization or "").partition(" ")
+    token = value.strip() if scheme.lower() == "bearer" else (x_api_key or "").strip()
+    if token:
+        for role, variable in (
+            (Role.ADMINISTRATOR, "AEROCASCADE_ADMIN_KEY"),
+            (Role.ANALYST, "AEROCASCADE_ANALYST_KEY"),
+            (Role.REVIEWER, "AEROCASCADE_REVIEWER_KEY"),
+            (Role.APPROVER, "AEROCASCADE_APPROVER_KEY"),
+        ):
+            configured = os.environ.get(variable)
+            if configured and hmac.compare_digest(token.encode(), configured.encode()):
+                return role
+        raise HTTPException(status_code=401, detail="Invalid API credentials.")
+
+    if x_aerocascade_role:
+        try:
+            return Role(x_aerocascade_role.strip().lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Unknown development role.") from exc
 
     return Role.ANALYST
 

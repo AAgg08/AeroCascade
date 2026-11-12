@@ -10,8 +10,10 @@ Exposes authoritative REST API endpoints for:
 """
 
 from __future__ import annotations
+import hashlib
 import json
 import os
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, status, Request, Response, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,10 @@ from .graph_engine import build_dependency_graph
 from .models import SimulationRequest, SimulationResponse
 from .security import (
     Action,
+    Account,
+    get_authenticated_account,
+    get_authenticated_role,
+    load_enterprise_accounts,
     Role,
     is_enterprise_mode,
     require_role,
@@ -45,7 +51,18 @@ from .repository import (
 )
 from .simpy_engine import run_cascade_simulation
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if is_enterprise_mode():
+        app.state.enterprise_accounts = load_enterprise_accounts()
+    try:
+        yield
+    finally:
+        app.state.enterprise_accounts = {}
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="AeroCascade Aviation Cybersecurity Causal Simulation Engine & Topology Repository",
     description=(
         "Authoritative FastAPI + NetworkX + SimPy causal simulator and SQLite versioned topology repository for "
@@ -55,13 +72,13 @@ app = FastAPI(
     version="2.1.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if not is_enterprise_mode():
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 repo = TopologyRepository()
 
@@ -101,6 +118,11 @@ def health_check() -> dict:
     }
 
 
+@app.get("/api/auth/session")
+def get_enterprise_session(account: Account = Depends(get_authenticated_account)) -> dict:
+    return {"username": account.username, "role": account.role.value}
+
+
 @app.post("/api/simulate", response_model=SimulationResponse)
 def simulate_cascade(
     payload: SimulationRequest,
@@ -126,7 +148,7 @@ def simulate_cascade(
 
 
 @app.post("/api/topology/centrality")
-def analyze_topology(payload: SimulationRequest) -> dict:
+def analyze_topology(payload: SimulationRequest, _role: Role = Depends(require_role(Action.RUN))) -> dict:
     try:
         if not payload.nodes:
             raise HTTPException(status_code=400, detail="Node list cannot be empty for topology analysis.")
@@ -147,7 +169,7 @@ def analyze_topology(payload: SimulationRequest) -> dict:
 # Topology Repository REST Endpoints
 # ==============================================================================
 
-@app.get("/api/topologies")
+@app.get("/api/topologies", dependencies=[Depends(get_authenticated_role)])
 def list_topologies() -> dict:
     topos = repo.list_topologies()
     return {"topologies": topos}
@@ -168,7 +190,7 @@ def create_topology(
         raise HTTPException(status_code=400, detail=f"Failed to create topology: {e}")
 
 
-@app.get("/api/topologies/{topology_id}")
+@app.get("/api/topologies/{topology_id}", dependencies=[Depends(get_authenticated_role)])
 def get_topology(topology_id: str) -> dict:
     try:
         return repo.get_topology(topology_id)
@@ -176,7 +198,7 @@ def get_topology(topology_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/api/topologies/{topology_id}/versions/{version_num}")
+@app.get("/api/topologies/{topology_id}/versions/{version_num}", dependencies=[Depends(get_authenticated_role)])
 def get_topology_version(topology_id: str, version_num: int) -> dict:
     try:
         return repo.get_version(topology_id, version_num)
@@ -224,7 +246,7 @@ def clone_topology(
         raise HTTPException(status_code=400, detail=f"Failed to clone topology: {e}")
 
 
-@app.get("/api/runs")
+@app.get("/api/runs", dependencies=[Depends(get_authenticated_role)])
 def list_runs(
     topology_id: Optional[str] = Query(None),
     topology_version: Optional[int] = Query(None),
@@ -233,7 +255,7 @@ def list_runs(
     return {"runs": runs}
 
 
-@app.get("/api/runs/{run_id}")
+@app.get("/api/runs/{run_id}", dependencies=[Depends(get_authenticated_role)])
 def get_run(run_id: str) -> dict:
     try:
         return repo.get_run(run_id)
@@ -310,7 +332,7 @@ def save_imported_topology(
         raise HTTPException(status_code=400, detail=f"Failed to save imported topology: {str(e)}")
 
 
-@app.get("/api/import/templates/{template_name}")
+@app.get("/api/import/templates/{template_name}", dependencies=[Depends(get_authenticated_role)])
 def download_import_template(template_name: str) -> Response:
     tname = template_name.lower().strip()
     if tname in ("synthetic-30-nodes.xlsx", "synthetic_airport_30nodes.xlsx", "30-nodes.xlsx"):
@@ -347,7 +369,8 @@ class ReviewCommentPayload(BaseModel):
 class DossierApprovalPayload(BaseModel):
     topology_id: str
     topology_version: int
-    signoff_notes: str
+    signoff_notes: str = Field(max_length=4000)
+    run_id: Optional[str] = None
     approver_name: Optional[str] = "Designated Authority"
 
 
@@ -365,11 +388,41 @@ def add_review_comment(
     }
 
 
+def dossier_run(run_id: str, topology_id: str, topology_version: Optional[int]) -> dict:
+    try:
+        run = repo.get_run(run_id)
+    except TopologyNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run["topology_id"] != topology_id or (
+        topology_version is not None and run["topology_version"] != topology_version
+    ):
+        raise HTTPException(status_code=409, detail="The run does not belong to this topology version.")
+    return run
+
+
+def dossier_run_hash(run: dict) -> str:
+    payload = json.dumps(run, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 @app.post("/api/dossier/approve")
 def approve_dossier(
     body: DossierApprovalPayload,
+    request: Request,
     _role: Role = Depends(require_role(Action.APPROVE)),
 ) -> dict:
+    if is_enterprise_mode():
+        if not body.run_id:
+            raise HTTPException(status_code=422, detail="A persisted run ID is required.")
+        account = get_authenticated_account(request)
+        run = dossier_run(body.run_id, body.topology_id, body.topology_version)
+        approval = repo.approve_run(
+            body.run_id, account.username, account.role.value, body.signoff_notes, dossier_run_hash(run)
+        )
+        if approval is None:
+            raise HTTPException(status_code=409, detail="This run already has an approval.")
+        return {"status": "approved", "approval": approval}
+
     return {
         "status": "approved",
         "topology_id": body.topology_id,
@@ -384,11 +437,27 @@ def approve_dossier(
 def export_dossier(
     topology_id: str,
     topology_version: Optional[int] = None,
+    run_id: Optional[str] = None,
     _role: Role = Depends(require_role(Action.EXPORT)),
 ) -> dict:
-    topo = repo.get_topology(topology_id)
-    if not topo:
-        raise HTTPException(status_code=404, detail="Topology not found")
+    if is_enterprise_mode():
+        if not run_id:
+            raise HTTPException(status_code=422, detail="A persisted run ID is required.")
+        run = dossier_run(run_id, topology_id, topology_version)
+        digest = dossier_run_hash(run)
+        approval = repo.get_run_approval(run_id)
+        if approval and approval["run_sha256"] != digest:
+            raise HTTPException(status_code=409, detail="Run integrity check failed.")
+        return {
+            "export_status": "success",
+            "run": run,
+            "run_sha256": digest,
+            "approval": approval,
+        }
+    try:
+        topo = repo.get_topology(topology_id)
+    except TopologyNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
         "export_status": "success",
         "topology_id": topology_id,

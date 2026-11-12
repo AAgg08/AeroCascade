@@ -50,6 +50,7 @@ services:
       - "8000"
     environment:
       - ENTERPRISE_MODE=true
+      - AEROCASCADE_ACCOUNTS_FILE=/run/aerocascade/accounts.json
       - AEROCASCADE_DB_PATH=/var/lib/aerocascade/data/aerocascade.db
       - AEROCASCADE_BACKUP_DIR=/var/lib/aerocascade/backups
       - PYTHONUNBUFFERED=1
@@ -57,6 +58,12 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     volumes:
+      - type: bind
+        source: ${AEROCASCADE_ACCOUNTS_FILE:?Set the absolute path to the provisioned accounts file}
+        target: /run/aerocascade/accounts.json
+        read_only: true
+        bind:
+          create_host_path: false
       - aerocascade-data:/var/lib/aerocascade/data:rw
       - aerocascade-backups:/var/lib/aerocascade/backups:rw
     networks:

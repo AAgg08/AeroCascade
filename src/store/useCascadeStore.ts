@@ -93,6 +93,10 @@ interface CascadeState {
   pendingRequestsCount: number;
   backendError: string | null;
   costPerDelayedMovement: number;
+  disruptionCurrency: string;
+  costPerFlightHour: number | null;
+  implementationCost: number | null;
+  initialQueueBacklog: number;
   topologies: TopologySummary[];
   currentTopologyId: string | null;
   currentTopologyVersion: number | null;
@@ -115,6 +119,10 @@ interface CascadeState {
   setTriggerHour: (hour: number) => void;
   setBaselineMovements: (mvmt: number) => void;
   setCostPerDelayedMovement: (cost: number) => void;
+  setDisruptionCurrency: (currency: string) => void;
+  setCostPerFlightHour: (rate: number | null) => void;
+  setImplementationCost: (cost: number | null) => void;
+  setInitialQueueBacklog: (backlog: number) => void;
   executeSimulationOnServer: (opts?: { allowLegacyDemo?: boolean; replicates?: number }) => Promise<void>;
   clearBackendError: () => void;
   setTopologyModalOpen: (open: boolean) => void;
@@ -173,6 +181,10 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
   pendingRequestsCount: 0,
   backendError: null,
   costPerDelayedMovement: savedWorkspace.settings?.costPerDelayedMovement ?? 7500,
+  disruptionCurrency: savedWorkspace.settings?.disruptionCurrency ?? 'USD',
+  costPerFlightHour: savedWorkspace.settings?.costPerFlightHour ?? null,
+  implementationCost: savedWorkspace.settings?.implementationCost ?? null,
+  initialQueueBacklog: savedWorkspace.settings?.initialQueueBacklog ?? 0,
   topologies: [],
   currentTopologyId: initialScenario.id,
   currentTopologyVersion: 1,
@@ -192,6 +204,28 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
 
   setCostPerDelayedMovement: (cost: number) =>
     set({ costPerDelayedMovement: Math.max(0, Number.isFinite(cost) ? cost : 0) }),
+
+  setDisruptionCurrency: (currency: string) =>
+    set({ disruptionCurrency: currency.trim().toUpperCase() || 'USD' }),
+
+  setCostPerFlightHour: (rate: number | null) =>
+    set({
+      costPerFlightHour:
+        rate === null || rate === undefined || !Number.isFinite(rate)
+          ? null
+          : Math.max(0, rate),
+    }),
+
+  setImplementationCost: (cost: number | null) =>
+    set({
+      implementationCost:
+        cost === null || cost === undefined || !Number.isFinite(cost)
+          ? null
+          : Math.max(0, cost),
+    }),
+
+  setInitialQueueBacklog: (backlog: number) =>
+    set({ initialQueueBacklog: Math.max(0, Number.isFinite(backlog) ? Math.round(backlog) : 0) }),
 
   setActiveTab: (tab) => {
     if (typeof window !== 'undefined' && window.location.hash !== `#${tab}`) {
@@ -236,6 +270,10 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
       simulationResult: simResult,
       backendError: null,
       costPerDelayedMovement: settings?.costPerDelayedMovement ?? get().costPerDelayedMovement,
+      disruptionCurrency: settings?.disruptionCurrency ?? get().disruptionCurrency,
+      costPerFlightHour: settings?.costPerFlightHour !== undefined ? settings.costPerFlightHour : get().costPerFlightHour,
+      implementationCost: settings?.implementationCost !== undefined ? settings.implementationCost : get().implementationCost,
+      initialQueueBacklog: settings?.initialQueueBacklog !== undefined ? settings.initialQueueBacklog : get().initialQueueBacklog,
       inputRevision: nextRev,
       lastSyncedAt: `Scenario Loaded (${found.id}) · Rev #${nextRev}`,
     });
@@ -536,7 +574,7 @@ export const useCascadeStore = create<CascadeState>((set, get) => ({
         baselineMovementsPerHour: canonical.baseline_movements_per_hour,
         triggerHour: canonical.trigger_hour,
         horizonHours: canonical.horizon_hours,
-        costPerDelayedMovement: canonical.cost_per_delayed_movement || 7500,
+        costPerDelayedMovement: canonical.cost_per_delayed_movement ?? 7500,
         nodes: simInput.nodes,
         edges: simInput.edges,
         selectedNodeId: simInput.nodes[0]?.id ?? null,
@@ -769,7 +807,11 @@ if (typeof window !== 'undefined') {
     if (state.nodes === previous.nodes && state.activeScenarioId === previous.activeScenarioId
       && state.baselineMovementsPerHour === previous.baselineMovementsPerHour
       && state.triggerHour === previous.triggerHour
-      && state.costPerDelayedMovement === previous.costPerDelayedMovement) return;
+      && state.costPerDelayedMovement === previous.costPerDelayedMovement
+      && state.disruptionCurrency === previous.disruptionCurrency
+      && state.costPerFlightHour === previous.costPerFlightHour
+      && state.implementationCost === previous.implementationCost
+      && state.initialQueueBacklog === previous.initialQueueBacklog) return;
     try {
       if (!workspaceStorage) throw new Error('Storage unavailable');
       workspaceStorage.setItem(WORKSPACE_STORAGE_KEY, serializeWorkspace(state));

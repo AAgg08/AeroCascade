@@ -2,35 +2,26 @@
 set -euo pipefail
 
 # AeroCascade Air-Gapped Release Packaging Script
-# Prepares offline release bundle: pinned container images, SBOM, and signed SHA256 checksums.
+# Prepares offline release bundle: pinned container images, SBOM, and SHA-256 checksums.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RELEASE_DIR="${REPO_ROOT}/release"
 
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  echo "A running Docker Engine is required to build the offline images and include their runtimes." >&2
+  exit 1
+fi
+
 echo "=== AeroCascade Air-Gapped Release Packager ==="
-echo "Repository Root: ${REPO_ROOT}"
-echo "Release Directory: ${RELEASE_DIR}"
+cd "${REPO_ROOT}"
 mkdir -p "${RELEASE_DIR}"
 
-# Step 1: Clean build of production frontend and gateway bundle
-echo "--> Building production frontend (Vite) and gateway bundle (esbuild)..."
-cd "${REPO_ROOT}"
-npm run build
-npx esbuild server.ts --bundle --platform=node --format=esm --outfile=dist-server/server.mjs --external:vite
-
-# Step 2: Build / Package Container Image Archives
-echo "--> Packaging pinned container images (gateway:2.0.0, backend:2.0.0)..."
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  echo "Using host Docker daemon to build and export images..."
-  docker build -t aerocascade-gateway:2.0.0 -f Dockerfile.gateway .
-  docker build -t aerocascade-backend:2.0.0 -f Dockerfile.backend .
-  docker save aerocascade-gateway:2.0.0 | gzip > "${RELEASE_DIR}/aerocascade-gateway-2.0.0.tar.gz"
-  docker save aerocascade-backend:2.0.0 | gzip > "${RELEASE_DIR}/aerocascade-backend-2.0.0.tar.gz"
-else
-  echo "Docker daemon not running locally. Using internal OCI archive generator..."
-  "${REPO_ROOT}/backend/.venv/bin/python" "${REPO_ROOT}/scripts/create_docker_archive.py"
-fi
+echo "--> Building pinned container images..."
+docker build -t aerocascade-gateway:2.0.0 -f Dockerfile.gateway .
+docker build -t aerocascade-backend:2.0.0 -f Dockerfile.backend .
+docker save aerocascade-gateway:2.0.0 | gzip > "${RELEASE_DIR}/aerocascade-gateway-2.0.0.tar.gz"
+docker save aerocascade-backend:2.0.0 | gzip > "${RELEASE_DIR}/aerocascade-backend-2.0.0.tar.gz"
 
 # Step 3: Generate CycloneDX SBOM
 echo "--> Generating Software Bill of Materials (SBOM)..."
@@ -59,6 +50,7 @@ files = [
     "docker-compose.yml",
     "install.sh",
     "docs/RUNBOOK.md",
+    "scripts/provision_accounts.py",
     "release/sbom.json",
     "release/aerocascade-gateway-2.0.0.tar.gz",
     "release/aerocascade-backend-2.0.0.tar.gz",

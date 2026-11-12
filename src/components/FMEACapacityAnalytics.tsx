@@ -17,6 +17,10 @@ import {
   computeResidualRPN,
   evaluateNodePSOE,
 } from '../domain/simulationEngine.ts';
+import {
+  computeDisruptionCostComparison,
+  formatCurrencyValue,
+} from '../domain/disruptionCost.ts';
 import { CascadeStage, ControlCategory } from '../domain/types.ts';
 import { useCascadeStore } from '../store/useCascadeStore.ts';
 
@@ -34,6 +38,14 @@ export function FMEACapacityAnalytics() {
     inputRevision,
     costPerDelayedMovement,
     setCostPerDelayedMovement,
+    disruptionCurrency,
+    costPerFlightHour,
+    implementationCost,
+    initialQueueBacklog,
+    setDisruptionCurrency,
+    setCostPerFlightHour,
+    setImplementationCost,
+    setInitialQueueBacklog,
   } = useCascadeStore();
 
   const isStale = inputRevision > (simulationResult.provenance?.input_revision ?? 0);
@@ -55,6 +67,39 @@ export function FMEACapacityAnalytics() {
   const triggerTimeLabel = resultTrigger === undefined
     ? undefined
     : `T+${String(resultTrigger).padStart(2, '0')}:00`;
+
+  const disruptionComparison = useMemo(() => {
+    try {
+      if (!simulationResult.hourly_capacity || simulationResult.hourly_capacity.length < 2) {
+        return null;
+      }
+      return computeDisruptionCostComparison(
+        simulationResult.hourly_capacity,
+        {
+          currency: disruptionCurrency,
+          costPerFlightHour,
+          implementationCost,
+          initialBacklogMovements: initialQueueBacklog,
+        },
+        {
+          horizonHours: simulationResult.hourly_capacity.length,
+          baselineDemand: simulationResult.hourly_capacity[0]?.baseline_capacity,
+          modelVersion: simulationResult.model_version,
+          engine: simulationResult.provenance?.engine,
+          replicates,
+        }
+      );
+    } catch {
+      return null;
+    }
+  }, [
+    simulationResult,
+    disruptionCurrency,
+    costPerFlightHour,
+    implementationCost,
+    initialQueueBacklog,
+    replicates,
+  ]);
 
   const lostCapacity =
     simulationResult.summary_kpis.estimated_lost_movement_capacity ??
@@ -524,6 +569,246 @@ export function FMEACapacityAnalytics() {
           </div>
         </section>
       </div>
+
+      {/* Disruption Cost & Queue-Integrated Delay Economics Card */}
+      {disruptionComparison && (
+        <section
+          aria-label="Disruption Cost and Queue Delay Analysis"
+          data-testid="disruption-cost-view"
+          className="rounded-3xl border border-gray-100 bg-white p-6 sm:p-8 shadow-sm space-y-6"
+        >
+          {/* Section Header */}
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between border-b border-gray-100 pb-5">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 px-3 py-1 text-xs font-semibold">
+                  Queue-Integrated Delay Economics
+                </span>
+                <span className="rounded-full bg-gray-100 text-gray-700 px-3 py-1 text-xs font-medium">
+                  FIFO Movement Backlog Integral
+                </span>
+                {disruptionComparison.provenance.isStochastic && (
+                  <span className="rounded-full bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 text-xs font-medium">
+                    Deterministic Comparison (Marginal Curves)
+                  </span>
+                )}
+              </div>
+              <h3 className="mt-2 text-base font-bold text-gray-900">
+                Modeled Disruption Cost &amp; Comparative Delay Analysis
+              </h3>
+              <p className="mt-1 text-xs text-gray-500 max-w-3xl leading-relaxed">
+                Carries unmet movements forward across documented hourly steps under an explicit fluid-flow queue service assumption. Modeled delay integrates backlog over elapsed time (flight-hours of delay) rather than multiplying raw lost capacity. Dollar outputs remain blank until a rate is entered.
+              </p>
+            </div>
+
+            {/* Run Provenance Match Info */}
+            <div className="flex flex-col md:items-end text-xs text-gray-500 shrink-0 space-y-0.5">
+              <span className="font-semibold text-gray-700">
+                Matched Conditions · {disruptionComparison.provenance.horizonHours}h Horizon · {disruptionComparison.provenance.baselineDemandPerHour} mvmt/h Demand
+              </span>
+              <span className="text-[11px] text-gray-400">
+                Model {disruptionComparison.provenance.modelVersion} · {simulationResult.provenance?.engine_label ?? 'FastAPI Engine'}
+              </span>
+            </div>
+          </div>
+
+          {/* Assumption Inputs Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 rounded-2xl bg-gray-50/80 p-4 border border-gray-200/70">
+            {/* Currency Input */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-wider mb-1">
+                Currency
+              </label>
+              <select
+                aria-label="Currency"
+                value={disruptionCurrency}
+                onChange={(e) => setDisruptionCurrency(e.target.value)}
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-xs focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+              >
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+                <option value="CAD">CAD (CA$)</option>
+                <option value="CHF">CHF</option>
+              </select>
+            </div>
+
+            {/* Cost Per Flight-Hour */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-wider mb-1">
+                Cost / Flight-Hour of Delay
+              </label>
+              <input
+                type="number"
+                min={0}
+                step={250}
+                placeholder="Enter rate (e.g. 2500)"
+                value={costPerFlightHour ?? ''}
+                onChange={(e) => {
+                  const val = e.target.value.trim();
+                  setCostPerFlightHour(val === '' ? null : Number(val));
+                }}
+                aria-label="Cost per flight-hour of delay"
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-xs focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+              />
+              <p className="mt-1 text-[10px] text-gray-400">
+                {costPerFlightHour === null ? 'Outputs remain blank until rate entered' : 'Applied to modeled delay hours'}
+              </p>
+            </div>
+
+            {/* Implementation Cost */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-wider mb-1">
+                Implementation Cost (Optional)
+              </label>
+              <input
+                type="number"
+                min={0}
+                step={5000}
+                placeholder="Optional (e.g. 150000)"
+                value={implementationCost ?? ''}
+                onChange={(e) => {
+                  const val = e.target.value.trim();
+                  setImplementationCost(val === '' ? null : Number(val));
+                }}
+                aria-label="Mitigation implementation cost"
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-xs focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+              />
+              <p className="mt-1 text-[10px] text-gray-400">
+                Enables separate Net Benefit calculation
+              </p>
+            </div>
+
+            {/* Initial Queue Backlog */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-wider mb-1">
+                Initial Backlog (T+00)
+              </label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={initialQueueBacklog}
+                onChange={(e) => setInitialQueueBacklog(Number(e.target.value))}
+                aria-label="Initial queue backlog movements"
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-xs focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+              />
+              <p className="mt-1 text-[10px] text-gray-400">
+                Carried-in movements at simulation onset
+              </p>
+            </div>
+          </div>
+
+          {/* 4 Comparative Cards KPI Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Card 1: Unmitigated Cascade */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs">
+              <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider">
+                Unmitigated Cascade
+              </span>
+              <div className="mt-2 text-2xl font-black text-gray-900" data-testid="unmitigated-modeled-cost">
+                {disruptionComparison.unmitigated.formattedCost}
+              </div>
+              <div className="mt-1 text-xs font-semibold text-gray-600">
+                {disruptionComparison.unmitigated.totalDelayFlightHours.toFixed(1)} flight-hours of delay
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-100 text-[11px] text-gray-500 space-y-1">
+                <div>Within-horizon modeled cost: <span className="font-bold text-gray-800">{disruptionComparison.unmitigated.formattedCost}</span></div>
+                <div>Terminal Backlog: <span className="font-bold text-rose-700">{disruptionComparison.unmitigated.terminalBacklogMovements} mvmt</span></div>
+                <div>Peak Queue: <span className="font-medium text-gray-700">{disruptionComparison.unmitigated.peakBacklogMovements} mvmt</span></div>
+              </div>
+            </div>
+
+            {/* Card 2: Tripartite Mitigated */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs">
+              <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">
+                Tripartite Mitigated
+              </span>
+              <div className="mt-2 text-2xl font-black text-gray-900" data-testid="mitigated-modeled-cost">
+                {disruptionComparison.mitigated.formattedCost}
+              </div>
+              <div className="mt-1 text-xs font-semibold text-gray-600">
+                {disruptionComparison.mitigated.totalDelayFlightHours.toFixed(1)} flight-hours of delay
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-100 text-[11px] text-gray-500 space-y-1">
+                <div>Within-horizon modeled cost: <span className="font-bold text-gray-800">{disruptionComparison.mitigated.formattedCost}</span></div>
+                <div>Terminal Backlog: <span className="font-bold text-emerald-700">{disruptionComparison.mitigated.terminalBacklogMovements} mvmt</span></div>
+                <div>Peak Queue: <span className="font-medium text-gray-700">{disruptionComparison.mitigated.peakBacklogMovements} mvmt</span></div>
+              </div>
+            </div>
+
+            {/* Card 3: Signed Disruption Cost Savings (Delta) */}
+            <div className={`rounded-2xl border p-5 shadow-xs ${
+              disruptionComparison.deltaDisruptionCost !== null && disruptionComparison.deltaDisruptionCost < 0
+                ? 'border-rose-200 bg-rose-50/30'
+                : 'border-emerald-200 bg-emerald-50/30'
+            }`}>
+              <span className={`text-[11px] font-bold uppercase tracking-wider ${
+                disruptionComparison.deltaDisruptionCost !== null && disruptionComparison.deltaDisruptionCost < 0
+                  ? 'text-rose-700'
+                  : 'text-emerald-700'
+              }`}>
+                Modeled Cost Savings (Δ)
+              </span>
+              <div className={`mt-2 text-2xl font-black ${
+                disruptionComparison.deltaDisruptionCost !== null && disruptionComparison.deltaDisruptionCost < 0
+                  ? 'text-rose-700'
+                  : 'text-emerald-800'
+              }`} data-testid="disruption-delta-cost">
+                {disruptionComparison.formattedDeltaCost}
+              </div>
+              <div className="mt-1 text-xs font-semibold text-gray-700">
+                {disruptionComparison.deltaDelayFlightHours >= 0 ? '+' : ''}
+                {disruptionComparison.deltaDelayFlightHours.toFixed(1)} flight-hours saved
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-200/60 text-[11px] text-gray-600 space-y-1">
+                <div>Terminal Backlog Δ: <span className="font-bold text-gray-800">{disruptionComparison.deltaTerminalBacklogMovements >= 0 ? '-' : '+'}{Math.abs(disruptionComparison.deltaTerminalBacklogMovements)} mvmt</span></div>
+                <div className="text-[10px] text-gray-400">Signed delta: Unmitigated − Mitigated</div>
+              </div>
+            </div>
+
+            {/* Card 4: Net Economic Benefit */}
+            <div className={`rounded-2xl border p-5 shadow-xs ${
+              disruptionComparison.netBenefit !== null && disruptionComparison.netBenefit < 0
+                ? 'border-rose-200 bg-rose-50/20'
+                : 'border-indigo-200 bg-indigo-50/20'
+            }`}>
+              <span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wider">
+                Net Economic Benefit
+              </span>
+              <div className={`mt-2 text-2xl font-black ${
+                disruptionComparison.netBenefit !== null && disruptionComparison.netBenefit < 0
+                  ? 'text-rose-700'
+                  : 'text-indigo-900'
+              }`} data-testid="net-benefit-cost">
+                {disruptionComparison.formattedNetBenefit}
+              </div>
+              <div className="mt-1 text-xs font-semibold text-gray-600">
+                {implementationCost !== null && implementationCost > 0
+                  ? `Savings − ${formatCurrencyValue(implementationCost, disruptionCurrency)} Impl.`
+                  : 'Requires implementation cost'}
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-200/60 text-[11px] text-gray-500 space-y-1">
+                <div>Status: <span className="font-semibold">{disruptionComparison.netBenefit !== null ? (disruptionComparison.netBenefit >= 0 ? 'ROI Positive' : 'Net Loss') : 'Rate/Cost Pending'}</span></div>
+                <div className="text-[10px] text-gray-400">Separately calculated net value</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Terminal Backlog & Horizon Boundary Footnote Banner */}
+          <div className="rounded-2xl bg-amber-50/80 border border-amber-200/70 p-4 text-xs text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-amber-800">● Horizon Boundary:</span>
+              <span>{disruptionComparison.formattedTerminalBacklogNote}</span>
+            </div>
+            {disruptionComparison.mitigated.drainHour !== null && (
+              <span className="font-semibold text-emerald-800 shrink-0 bg-white/90 px-3 py-1 rounded-full border border-emerald-200 shadow-2xs">
+                Mitigated Queue Cleared at T+{disruptionComparison.mitigated.drainHour.toFixed(1)}h
+              </span>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Interactive FMEA & Tripartite Matrix Table Card */}
       <section
