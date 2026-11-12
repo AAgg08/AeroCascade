@@ -15,6 +15,7 @@ Verifies:
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import unittest
 
@@ -310,6 +311,129 @@ class TestTopologyRepository(unittest.TestCase):
         self.assertEqual(full_run["topology_id"], "run-twin")
         self.assertEqual(full_run["topology_version"], 1)
         self.assertIn("events", full_run["result"])
+
+    def test_atomic_migration_interruption_and_rollback(self):
+        """Verifies an interrupted migration rolls back cleanly and does not reclassify or lose approvals."""
+        db_file = os.path.join(self.temp_dir, "interrupted_migration.db")
+        # Build schema up to migration 2 manually
+        conn = sqlite3.connect(db_file)
+        from backend.repository import _migrate_001, _migrate_002
+        _migrate_001(conn)
+        _migrate_002(conn)
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT);")
+        conn.execute("INSERT INTO schema_migrations VALUES (1, '001'), (2, '002');")
+        conn.execute("INSERT INTO topologies VALUES ('topo-1', 'Topo 1', '', NULL, NULL, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);")
+        conn.execute("INSERT INTO topology_versions VALUES ('topo-1:v1', 'topo-1', 1, '{}', '{}', '', CURRENT_TIMESTAMP);")
+        conn.execute("INSERT INTO simulation_runs VALUES ('run-atomic-1', 'topo-1', 1, '2.0.0', 42, 1, '{\"topology_version\": 1}', '{}', CURRENT_TIMESTAMP);")
+        conn.execute("INSERT INTO dossier_approvals VALUES ('run-atomic-1', 'Orig Approver', 'approver', 'Original notes', 'sha_atom_1', '2026-01-01T00:00:00Z');")
+        conn.commit()
+        conn.close()
+
+        # Simulate an interrupted migration 3
+        conn2 = sqlite3.connect(db_file)
+        conn2.isolation_level = None
+        conn2.execute("BEGIN IMMEDIATE;")
+        try:
+            conn2.execute("CREATE TABLE dossier_approvals_v3 (run_id TEXT, approval_type TEXT);")
+            conn2.execute("INSERT INTO dossier_approvals_v3 VALUES ('run-atomic-1', 'legacy');")
+            # Simulate crash / interruption
+            raise RuntimeError("Simulated crash mid-migration 3")
+            conn2.execute("INSERT INTO schema_migrations VALUES (3, '003');")
+            conn2.execute("COMMIT;")
+        except RuntimeError:
+            conn2.execute("ROLLBACK;")
+        conn2.close()
+
+        # Verify rollback left v2 schema intact
+        conn3 = sqlite3.connect(db_file)
+        cols = [r[1] for r in conn3.execute("PRAGMA table_info(dossier_approvals);").fetchall()]
+        self.assertNotIn("approval_type", cols, "Rollback must leave old table structure intact")
+        old_row = conn3.execute("SELECT * FROM dossier_approvals WHERE run_id = 'run-atomic-1';").fetchone()
+        self.assertIsNotNone(old_row)
+        self.assertEqual(old_row[3], "Original notes")
+        migs = [r[0] for r in conn3.execute("SELECT version FROM schema_migrations;").fetchall()]
+        self.assertEqual(migs, [1, 2], "schema_migrations must remain at version 2")
+        conn3.close()
+
+        # Now open through TopologyRepository, allowing migration 3 to complete atomically
+        repo = TopologyRepository(db_file)
+        migrated_approval = repo.get_run_approval("run-atomic-1")
+        self.assertIsNotNone(migrated_approval)
+        self.assertEqual(migrated_approval["approval_type"], "legacy")
+        self.assertEqual(migrated_approval["signoff_notes"], "Original notes")
+        with repo._get_connection() as c:
+            new_migs = [r["version"] for r in c.execute("SELECT version FROM schema_migrations;").fetchall()]
+            self.assertEqual(new_migs, [1, 2, 3])
+
+    def test_restore_pre_migration_backup_upgrades_copy_before_replacing_live(self):
+        """Pre-migration SQLite backup is upgraded in a copy before atomically replacing the live database."""
+        # 1. Create a pre-migration (schema v2) backup
+        backup_file = os.path.join(self.temp_dir, "premigration_backup.db")
+        conn = sqlite3.connect(backup_file)
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT);")
+        conn.execute("INSERT INTO schema_migrations VALUES (1, '001_initial'), (2, '002_dossier_approvals');")
+        conn.execute("CREATE TABLE topologies (id TEXT PRIMARY KEY, name TEXT, description TEXT, origin_topology_id TEXT, origin_version INTEGER, current_version INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP, updated_at TIMESTAMP);")
+        conn.execute("CREATE TABLE topology_versions (id TEXT PRIMARY KEY, topology_id TEXT, version INTEGER, canonical_data TEXT, resolved_input TEXT, change_summary TEXT, created_at TIMESTAMP);")
+        conn.execute("CREATE TABLE simulation_runs (run_id TEXT PRIMARY KEY, topology_id TEXT, topology_version INTEGER, engine_version TEXT, random_seed INTEGER, replicates INTEGER, resolved_input TEXT, result TEXT, executed_at TIMESTAMP);")
+        conn.execute("CREATE TABLE dossier_approvals (run_id TEXT PRIMARY KEY, approver TEXT, approver_role TEXT, signoff_notes TEXT, run_sha256 TEXT, approved_at TEXT);")
+        conn.execute("INSERT INTO topologies VALUES ('t-pre', 'Pre-Migration Topo', '', NULL, NULL, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);")
+        conn.execute("INSERT INTO topology_versions VALUES ('t-pre:v1', 't-pre', 1, '{}', '{}', '', CURRENT_TIMESTAMP);")
+        conn.execute("INSERT INTO simulation_runs VALUES ('run-pre-1', 't-pre', 1, '2.0.0', 42, 1, '{\"topology_version\": 1}', '{}', CURRENT_TIMESTAMP);")
+        conn.execute("INSERT INTO dossier_approvals VALUES ('run-pre-1', 'Legacy User', 'approver', 'Pre-migration notes', 'sha_pre_1', '2026-01-01T00:00:00Z');")
+        conn.commit()
+        conn.close()
+
+        # 2. Live database has current schema
+        live_db_file = os.path.join(self.temp_dir, "live_db.db")
+        live_repo = TopologyRepository(live_db_file)
+
+        # 3. Restore pre-migration backup through the restore path
+        live_repo.restore_database(backup_file)
+
+        # 4. Verify live database now contains upgraded schema v3 and migrated legacy approval
+        with live_repo._get_connection() as c:
+            migs = [r["version"] for r in c.execute("SELECT version FROM schema_migrations;").fetchall()]
+            self.assertEqual(migs, [1, 2, 3])
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(dossier_approvals);").fetchall()]
+            self.assertIn("approval_type", cols)
+
+        restored_approval = live_repo.get_run_approval("run-pre-1")
+        self.assertIsNotNone(restored_approval)
+        self.assertEqual(restored_approval["approval_type"], "legacy")
+        self.assertEqual(restored_approval["approver"], "Legacy User")
+        self.assertEqual(restored_approval["signoff_notes"], "Pre-migration notes")
+
+        # 5. Live database can record an enterprise approval without collision
+        ent_approval = live_repo.approve_run(
+            run_id="run-pre-1",
+            approver="authenticated-authority",
+            approver_role="approver",
+            notes="Enterprise sign-off after restore",
+            run_sha256="sha_ent_1",
+            approval_type="enterprise",
+            topology_id="t-pre",
+            topology_version=1,
+            authenticated_account="authenticated-authority",
+        )
+        self.assertIsNotNone(ent_approval)
+        self.assertEqual(ent_approval["approval_type"], "enterprise")
+
+    def test_restore_corrupt_backup_rejected_and_preserves_live(self):
+        """Restoring a corrupted backup raises an error and leaves the live database untouched."""
+        live_db_file = os.path.join(self.temp_dir, "live_db_corrupt_test.db")
+        live_repo = TopologyRepository(live_db_file)
+        canonical = self._make_sample_canonical(topo_id="keep-me", name="Keep Me")
+        live_repo.create_topology(name="Keep Me", canonical=canonical)
+
+        corrupt_backup = os.path.join(self.temp_dir, "corrupt.db")
+        with open(corrupt_backup, "wb") as f:
+            f.write(b"NOT_A_VALID_SQLITE_DATABASE_HEADER_DATA_1234567890")
+
+        with self.assertRaises(ValueError):
+            live_repo.restore_database(corrupt_backup)
+
+        # Live database is completely untouched
+        self.assertIsNotNone(live_repo.get_topology("keep-me"))
 
 
 if __name__ == "__main__":

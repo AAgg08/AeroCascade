@@ -35,17 +35,9 @@ class TopologyNotFoundError(Exception):
     pass
 
 
-MIGRATIONS = [
-    (
-        1,
-        "001_initial_topology_and_runs_schema",
+def _migrate_001(conn: sqlite3.Connection) -> None:
+    conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
         CREATE TABLE IF NOT EXISTS topologies (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -56,7 +48,10 @@ MIGRATIONS = [
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS topology_versions (
             id TEXT PRIMARY KEY,
             topology_id TEXT NOT NULL REFERENCES topologies(id) ON DELETE CASCADE,
@@ -67,7 +62,10 @@ MIGRATIONS = [
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(topology_id, version)
         );
-
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS simulation_runs (
             run_id TEXT PRIMARY KEY,
             topology_id TEXT NOT NULL REFERENCES topologies(id) ON DELETE CASCADE,
@@ -80,14 +78,14 @@ MIGRATIONS = [
             executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (topology_id, topology_version) REFERENCES topology_versions(topology_id, version)
         );
-
-        CREATE INDEX IF NOT EXISTS idx_versions_topology ON topology_versions(topology_id);
-        CREATE INDEX IF NOT EXISTS idx_runs_topology_version ON simulation_runs(topology_id, topology_version);
         """
-    ),
-    (
-        2,
-        "002_dossier_approvals",
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_topology ON topology_versions(topology_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_topology_version ON simulation_runs(topology_id, topology_version);")
+
+
+def _migrate_002(conn: sqlite3.Connection) -> None:
+    conn.execute(
         """
         CREATE TABLE IF NOT EXISTS dossier_approvals (
             run_id TEXT PRIMARY KEY REFERENCES simulation_runs(run_id) ON DELETE CASCADE,
@@ -98,48 +96,82 @@ MIGRATIONS = [
             approved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );
         """
-    ),
-    (
-        3,
-        "003_approval_provenance_separation",
-        """
-        CREATE TABLE IF NOT EXISTS dossier_approvals_v3 (
-            run_id TEXT NOT NULL REFERENCES simulation_runs(run_id) ON DELETE CASCADE,
-            approval_type TEXT NOT NULL CHECK(approval_type IN ('enterprise', 'exercise', 'legacy')),
-            approver TEXT NOT NULL,
-            approver_role TEXT NOT NULL,
-            signoff_notes TEXT NOT NULL,
-            run_sha256 TEXT NOT NULL,
-            topology_id TEXT,
-            topology_version INTEGER,
-            authenticated_account TEXT,
-            approved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-            PRIMARY KEY (run_id, approval_type)
-        );
+    )
 
-        INSERT OR IGNORE INTO dossier_approvals_v3 (
-            run_id, approval_type, approver, approver_role, signoff_notes, run_sha256, topology_id, topology_version, approved_at
+
+def _migrate_003(conn: sqlite3.Connection) -> None:
+    table_row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='dossier_approvals';"
+    ).fetchone()
+    if not table_row:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dossier_approvals (
+                run_id TEXT NOT NULL REFERENCES simulation_runs(run_id) ON DELETE CASCADE,
+                approval_type TEXT NOT NULL CHECK(approval_type IN ('enterprise', 'exercise', 'legacy')),
+                approver TEXT NOT NULL,
+                approver_role TEXT NOT NULL,
+                signoff_notes TEXT NOT NULL,
+                run_sha256 TEXT NOT NULL,
+                topology_id TEXT,
+                topology_version INTEGER,
+                authenticated_account TEXT,
+                approved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                PRIMARY KEY (run_id, approval_type)
+            );
+            """
         )
-        SELECT 
-            da.run_id,
-            'legacy',
-            da.approver,
-            da.approver_role,
-            da.signoff_notes,
-            da.run_sha256,
-            sr.topology_id,
-            sr.topology_version,
-            da.approved_at
-        FROM dossier_approvals da
-        LEFT JOIN simulation_runs sr ON da.run_id = sr.run_id;
+    else:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(dossier_approvals);").fetchall()]
+        if "approval_type" not in cols:
+            conn.execute(
+                """
+                CREATE TABLE dossier_approvals_v3 (
+                    run_id TEXT NOT NULL REFERENCES simulation_runs(run_id) ON DELETE CASCADE,
+                    approval_type TEXT NOT NULL CHECK(approval_type IN ('enterprise', 'exercise', 'legacy')),
+                    approver TEXT NOT NULL,
+                    approver_role TEXT NOT NULL,
+                    signoff_notes TEXT NOT NULL,
+                    run_sha256 TEXT NOT NULL,
+                    topology_id TEXT,
+                    topology_version INTEGER,
+                    authenticated_account TEXT,
+                    approved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    PRIMARY KEY (run_id, approval_type)
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO dossier_approvals_v3 (
+                    run_id, approval_type, approver, approver_role, signoff_notes,
+                    run_sha256, topology_id, topology_version, approved_at
+                )
+                SELECT 
+                    da.run_id,
+                    'legacy',
+                    da.approver,
+                    da.approver_role,
+                    da.signoff_notes,
+                    da.run_sha256,
+                    sr.topology_id,
+                    sr.topology_version,
+                    da.approved_at
+                FROM dossier_approvals da
+                LEFT JOIN simulation_runs sr ON da.run_id = sr.run_id;
+                """
+            )
+            conn.execute("DROP TABLE dossier_approvals;")
+            conn.execute("ALTER TABLE dossier_approvals_v3 RENAME TO dossier_approvals;")
 
-        DROP TABLE IF EXISTS dossier_approvals;
-        ALTER TABLE dossier_approvals_v3 RENAME TO dossier_approvals;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_dossier_approvals_run ON dossier_approvals(run_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_dossier_approvals_type ON dossier_approvals(approval_type);")
 
-        CREATE INDEX IF NOT EXISTS idx_dossier_approvals_run ON dossier_approvals(run_id);
-        CREATE INDEX IF NOT EXISTS idx_dossier_approvals_type ON dossier_approvals(approval_type);
-        """
-    ),
+
+MIGRATIONS = [
+    (1, "001_initial_topology_and_runs_schema", _migrate_001),
+    (2, "002_dossier_approvals", _migrate_002),
+    (3, "003_approval_provenance_separation", _migrate_003),
 ]
 
 
@@ -168,30 +200,51 @@ class TopologyRepository:
         return conn
 
     def init_db(self) -> None:
-        """Applies pending database migrations and seeds initial standard presets if empty."""
-        with self._get_connection() as conn:
-            # Check existing migrations table
-            cur = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations';"
+        """Applies pending database migrations atomically and seeds initial standard presets if empty."""
+        conn = self._get_connection()
+        try:
+            conn.isolation_level = None
+            # Ensure schema_migrations table exists
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """
             )
-            has_migrations_table = cur.fetchone() is not None
-            applied_versions = set()
-            if has_migrations_table:
-                applied_rows = conn.execute("SELECT version FROM schema_migrations;").fetchall()
-                applied_versions = {row["version"] for row in applied_rows}
 
-            for version, name, sql in MIGRATIONS:
+            applied_rows = conn.execute("SELECT version FROM schema_migrations;").fetchall()
+            applied_versions = {row["version"] for row in applied_rows}
+
+            for version, name, migration_target in MIGRATIONS:
                 if version not in applied_versions:
-                    conn.executescript(sql)
-                    conn.execute(
-                        "INSERT INTO schema_migrations (version, name) VALUES (?, ?);",
-                        (version, name),
-                    )
+                    conn.execute("BEGIN IMMEDIATE;")
+                    try:
+                        if callable(migration_target):
+                            migration_target(conn)
+                        else:
+                            for stmt in migration_target.strip().split(";"):
+                                stmt_clean = stmt.strip()
+                                if stmt_clean:
+                                    conn.execute(stmt_clean)
+                        conn.execute(
+                            "INSERT INTO schema_migrations (version, name) VALUES (?, ?);",
+                            (version, name),
+                        )
+                        conn.execute("COMMIT;")
+                    except Exception:
+                        conn.execute("ROLLBACK;")
+                        raise
 
             # Auto-seed standard presets if topologies table is empty
             count = conn.execute("SELECT COUNT(*) AS cnt FROM topologies;").fetchone()["cnt"]
             if count == 0:
                 self._seed_presets(conn)
+        finally:
+            if self._memory_conn is None:
+                conn.close()
 
     def _seed_presets(self, conn: sqlite3.Connection) -> None:
         """Seeds initial synthetic benchmark presets into the database."""
@@ -201,30 +254,36 @@ class TopologyRepository:
         try:
             with open(seed_path, "r", encoding="utf-8") as f:
                 presets = json.load(f)
-            for p in presets:
-                canonical = preset_dict_to_canonical_topology(p)
-                resolved_req = canonical_to_simulation_request(canonical)
+            conn.execute("BEGIN IMMEDIATE;")
+            try:
+                for p in presets:
+                    canonical = preset_dict_to_canonical_topology(p)
+                    resolved_req = canonical_to_simulation_request(canonical)
 
-                conn.execute(
-                    """
-                    INSERT INTO topologies (id, name, description, current_version)
-                    VALUES (?, ?, ?, 1);
-                    """,
-                    (canonical.topology_id, canonical.name, canonical.description),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO topology_versions (id, topology_id, version, canonical_data, resolved_input, change_summary)
-                    VALUES (?, ?, 1, ?, ?, ?);
-                    """,
-                    (
-                        f"{canonical.topology_id}:v1",
-                        canonical.topology_id,
-                        canonical.model_dump_json(),
-                        resolved_req.model_dump_json(),
-                        "Initial standard benchmark preset",
-                    ),
-                )
+                    conn.execute(
+                        """
+                        INSERT INTO topologies (id, name, description, current_version)
+                        VALUES (?, ?, ?, 1);
+                        """,
+                        (canonical.topology_id, canonical.name, canonical.description),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO topology_versions (id, topology_id, version, canonical_data, resolved_input, change_summary)
+                        VALUES (?, ?, 1, ?, ?, ?);
+                        """,
+                        (
+                            f"{canonical.topology_id}:v1",
+                            canonical.topology_id,
+                            canonical.model_dump_json(),
+                            resolved_req.model_dump_json(),
+                            "Initial standard benchmark preset",
+                        ),
+                    )
+                conn.execute("COMMIT;")
+            except Exception:
+                conn.execute("ROLLBACK;")
+                raise
         except Exception as e:
             # Seed error should not crash initialization
             print(f"Warning: Failed to seed default presets: {e}")
@@ -675,22 +734,64 @@ class TopologyRepository:
         """Creates a consistent online SQLite backup at backup_path."""
         backup_file = Path(backup_path).resolve()
         backup_file.parent.mkdir(parents=True, exist_ok=True)
-        with self._get_connection() as src_conn:
+        src_conn = self._get_connection()
+        try:
             dest_conn = sqlite3.connect(str(backup_file))
             try:
                 src_conn.backup(dest_conn)
             finally:
                 dest_conn.close()
+        finally:
+            if self._memory_conn is None:
+                src_conn.close()
 
     def restore_database(self, backup_path: str) -> None:
-        """Restores database from an external backup file and validates integrity."""
+        """Restores database from an external backup file and validates integrity.
+        Upgrades a copy through migrations before it replaces the live database.
+        """
         backup_file = Path(backup_path).resolve()
         if not backup_file.exists():
             raise FileNotFoundError(f"Backup file '{backup_path}' does not exist.")
 
-        with sqlite3.connect(str(backup_file)) as src_conn:
-            dest_conn = self._get_connection()
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_f:
+            staging_path = tmp_f.name
+
+        try:
+            # 1. Copy backup file to staging copy and check backup integrity
             try:
-                src_conn.backup(dest_conn)
+                with sqlite3.connect(str(backup_file)) as src_conn:
+                    integrity = src_conn.execute("PRAGMA integrity_check;").fetchone()
+                    if not integrity or integrity[0] != "ok":
+                        raise ValueError(f"Corrupt backup file: {integrity[0] if integrity else 'empty'}")
+                    with sqlite3.connect(staging_path) as staging_conn:
+                        src_conn.backup(staging_conn)
+            except sqlite3.Error as exc:
+                raise ValueError(f"Corrupt backup file: {exc}") from exc
+
+            # 2. Upgrade the staging copy by running migrations on it
+            staging_repo = TopologyRepository(staging_path)
+            with staging_repo._get_connection() as s_conn:
+                post_integrity = s_conn.execute("PRAGMA integrity_check;").fetchone()
+                if not post_integrity or post_integrity[0] != "ok":
+                    raise ValueError(f"Upgraded staging database failed integrity check: {post_integrity[0]}")
+                fk_violations = s_conn.execute("PRAGMA foreign_key_check;").fetchall()
+                if fk_violations:
+                    raise ValueError(f"Foreign key violations in restored database: {len(fk_violations)}")
+
+            # 3. Only after the copy has been successfully upgraded and verified,
+            # atomically replace the live database with the upgraded copy
+            live_conn = self._get_connection()
+            try:
+                with staging_repo._get_connection() as s_conn:
+                    s_conn.backup(live_conn)
             finally:
-                dest_conn.close()
+                if self._memory_conn is None:
+                    live_conn.close()
+
+        finally:
+            if os.path.exists(staging_path):
+                try:
+                    os.unlink(staging_path)
+                except OSError:
+                    pass

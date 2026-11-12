@@ -311,6 +311,18 @@ export function EASAComplianceView() {
           </div>
         )}
 
+        {runServerState?.approvalStatus === 'digest_mismatch' && (
+          <div
+            data-testid="dossier-digest-mismatch-banner"
+            className="flex items-center gap-2.5 rounded-2xl border border-rose-200 bg-rose-50/80 p-3.5 text-xs text-rose-800 font-medium"
+          >
+            <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+            <div>
+              <span className="font-bold">Run Integrity Failure:</span> Persisted approval digest does not match current simulation data. Re-run or re-approve this run.
+            </div>
+          </div>
+        )}
+
         {/* Grid: Run Provenance (Left) & Approval Action (Right) */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           {/* Run Provenance & Integrity (5 Cols) */}
@@ -458,9 +470,11 @@ export function EASAComplianceView() {
                   <div className="text-[11px] text-gray-500">
                     Recorded at: {new Date(runApproval.approved_at).toLocaleString()}
                   </div>
-                  <div className="text-gray-700 italic border-l-2 border-gray-300 pl-3 py-1 my-1">
-                    &ldquo;{runApproval.signoff_notes}&rdquo;
-                  </div>
+                  {runApproval.signoff_notes && (
+                    <div className="text-gray-700 italic border-l-2 border-gray-300 pl-3 py-1 my-1">
+                      &ldquo;{runApproval.signoff_notes}&rdquo;
+                    </div>
+                  )}
                   <div className="text-[10px] text-gray-400 flex items-center justify-between">
                     <span>Integrity Digest: {runApproval.run_sha256.slice(0, 16)}...</span>
                     <span>

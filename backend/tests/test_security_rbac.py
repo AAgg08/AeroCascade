@@ -513,6 +513,7 @@ class TestSecurityRBAC(unittest.TestCase):
                 self.assertIsNone(run_data["approval"], "Legacy approval must not appear as enterprise approval")
                 self.assertEqual(run_data["approval_status"], "legacy_approved")
                 self.assertIn("legacy", run_data["all_approvals"])
+                self.assertNotIn("signoff_notes", run_data["all_approvals"]["legacy"], "Enterprise responses must not return notes from legacy sign-off")
 
                 # Check B: Export dossier in enterprise mode does NOT present legacy approval
                 export_res = client.get(
@@ -556,6 +557,137 @@ class TestSecurityRBAC(unittest.TestCase):
                 self.assertEqual(export_after["approval"]["approval_type"], "enterprise")
                 self.assertEqual(export_after["approval"]["authenticated_account"], "enterprise-approver")
                 self.assertEqual(export_after["run_sha256"], new_approval["run_sha256"])
+
+    def test_development_mode_never_exposes_authenticated_account_or_notes_of_enterprise_approval(self):
+        """Development responses must never expose the authenticated account or notes from an enterprise approval."""
+        with TemporaryDirectory() as directory:
+            db_path = str(Path(directory) / "mixed_approvals.db")
+            repo = TopologyRepository(db_path)
+            topology_id = "rtc-optical-asmgcs-spoof"
+
+            sim_req = canonical_to_simulation_request(make_test_canonical(), {"topology_version": 1})
+            from backend.simpy_engine import run_cascade_simulation
+            sim_result = run_cascade_simulation(sim_req)
+            run_rec = repo.record_run(topology_id, 1, sim_req, sim_result)
+            run_id = run_rec["run_id"]
+            run_full = repo.get_run(run_id)
+            run_digest = main.dossier_run_hash(run_full)
+
+            # Record an authenticated enterprise approval
+            repo.approve_run(
+                run_id=run_id,
+                approver="alice-lead-auditor",
+                approver_role="approver",
+                notes="Confidential enterprise regulatory sign-off notes.",
+                run_sha256=run_digest,
+                approval_type="enterprise",
+                topology_id=topology_id,
+                topology_version=1,
+                authenticated_account="alice-lead-auditor@enterprise.internal",
+            )
+
+            # Run in development mode
+            with (
+                patch.dict(os.environ, {"ENTERPRISE_MODE": "false"}),
+                patch.object(main, "repo", repo),
+                TestClient(app) as client,
+            ):
+                # 1. Lookup run in dev mode
+                run_res = client.get(f"/api/runs/{run_id}")
+                self.assertEqual(run_res.status_code, 200)
+                run_data = run_res.json()
+
+                # Authoritative approval in dev mode must NOT be enterprise
+                self.assertIsNone(run_data["approval"], "Dev mode must not return enterprise approval as authoritative")
+
+                # The UI summary indicator for enterprise must NOT contain account or notes
+                self.assertIn("enterprise", run_data["all_approvals"])
+                ent_summary = run_data["all_approvals"]["enterprise"]
+                self.assertTrue(ent_summary.get("exists"))
+                self.assertNotIn("authenticated_account", ent_summary, "Dev mode must never expose authenticated account")
+                self.assertNotIn("signoff_notes", ent_summary, "Dev mode must never expose enterprise signoff notes")
+
+                # 2. Export dossier in dev mode
+                export_res = client.get(f"/api/export/dossier?topology_id={topology_id}&topology_version=1&run_id={run_id}")
+                self.assertEqual(export_res.status_code, 200)
+                export_data = export_res.json()
+                self.assertIsNone(export_data["approval"], "Dev mode export must not include enterprise approval")
+
+    def test_digest_check_enforced_in_run_status_and_export(self):
+        """Authoritative approval must match run digest in both run status and evidence export."""
+        admin_key = "1" * 64
+        approver_key = "2" * 64
+        with TemporaryDirectory() as directory:
+            accounts_file = Path(directory) / "accounts.json"
+            accounts_file.write_text(json.dumps([
+                {
+                    "username": "admin-1",
+                    "role": "administrator",
+                    "credential_digest": hashlib.sha256(admin_key.encode("ascii")).hexdigest(),
+                },
+                {
+                    "username": "approver-1",
+                    "role": "approver",
+                    "credential_digest": hashlib.sha256(approver_key.encode("ascii")).hexdigest(),
+                }
+            ]), encoding="utf-8")
+
+            db_path = str(Path(directory) / "tamper_test.db")
+            repo = TopologyRepository(db_path)
+            topology_id = "rtc-optical-asmgcs-spoof"
+
+            sim_req = canonical_to_simulation_request(make_test_canonical(), {"topology_version": 1})
+            from backend.simpy_engine import run_cascade_simulation
+            sim_result = run_cascade_simulation(sim_req)
+            run_rec = repo.record_run(topology_id, 1, sim_req, sim_result)
+            run_id = run_rec["run_id"]
+            run_full = repo.get_run(run_id)
+            run_digest = main.dossier_run_hash(run_full)
+
+            # Record enterprise approval with valid digest
+            repo.approve_run(
+                run_id=run_id,
+                approver="approver-1",
+                approver_role="approver",
+                notes="Approved run before tampering",
+                run_sha256=run_digest,
+                approval_type="enterprise",
+                topology_id=topology_id,
+                topology_version=1,
+                authenticated_account="approver-1",
+            )
+
+            # Now tamper with run result in SQLite
+            with repo._get_connection() as conn:
+                tampered_result = json.loads(run_full["result"]) if isinstance(run_full["result"], str) else run_full["result"].copy()
+                tampered_result["model_version"] = "TAMPERED_MODEL_2.0"
+                conn.execute(
+                    "UPDATE simulation_runs SET result = ? WHERE run_id = ?;",
+                    (json.dumps(tampered_result), run_id),
+                )
+                conn.commit()
+
+            with (
+                patch.dict(os.environ, {"ENTERPRISE_MODE": "true", "AEROCASCADE_ACCOUNTS_FILE": str(accounts_file)}),
+                patch.object(main, "repo", repo),
+                TestClient(app) as client,
+            ):
+                auth = ("approver-1", approver_key)
+
+                # Run lookup: digest mismatch invalidates authoritative approval
+                status_res = client.get(f"/api/runs/{run_id}", auth=auth)
+                self.assertEqual(status_res.status_code, 200)
+                status_data = status_res.json()
+                self.assertIsNone(status_data["approval"], "Tampered run must not show authoritative approval")
+                self.assertEqual(status_data["approval_status"], "digest_mismatch")
+
+                # Export dossier: raises 409 Conflict
+                export_res = client.get(
+                    f"/api/export/dossier?topology_id={topology_id}&topology_version=1&run_id={run_id}",
+                    auth=auth,
+                )
+                self.assertEqual(export_res.status_code, 409)
+                self.assertIn("Run integrity check failed", export_res.json()["detail"])
 
 
     def test_enterprise_gateway_cannot_use_development_backend(self):

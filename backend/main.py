@@ -286,27 +286,102 @@ def get_run(run_id: str) -> dict:
     try:
         run = repo.get_run(run_id)
         run_sha256 = dossier_run_hash(run)
-        all_approvals = repo.get_all_run_approvals(run_id)
+        all_approvals_raw = repo.get_all_run_approvals(run_id)
         enterprise_mode = is_enterprise_mode()
 
         if enterprise_mode:
-            # In enterprise mode, only an authenticated enterprise approval is authoritative
-            approval = all_approvals.get("enterprise")
-        else:
-            # In dev mode, return exercise approval if available, else legacy, else enterprise
-            approval = all_approvals.get("exercise") or all_approvals.get("legacy") or all_approvals.get("enterprise")
+            # In enterprise mode, strictly return the authenticated enterprise approval as authoritative
+            raw_ent = all_approvals_raw.get("enterprise")
+            if raw_ent and raw_ent.get("run_sha256") == run_sha256:
+                approval = raw_ent
+                approval_status = "enterprise_approved"
+            elif raw_ent:
+                approval = None
+                approval_status = "digest_mismatch"
+            elif "legacy" in all_approvals_raw:
+                approval = None
+                approval_status = "legacy_approved"
+            elif "exercise" in all_approvals_raw:
+                approval = None
+                approval_status = "exercise_approved"
+            else:
+                approval = None
+                approval_status = "unapproved"
 
-        return {
-            **run,
-            "approval": approval,
-            "all_approvals": all_approvals,
-            "run_sha256": run_sha256,
-            "approval_status": (
-                "enterprise_approved"
-                if all_approvals.get("enterprise")
-                else ("exercise_approved" if all_approvals.get("exercise") else ("legacy_approved" if all_approvals.get("legacy") else "unapproved"))
-            ),
-        }
+            # Sanitized summary: UI can see legacy/exercise sign-off exists without returning notes
+            all_approvals = {}
+            if approval:
+                all_approvals["enterprise"] = approval
+            if "legacy" in all_approvals_raw:
+                leg = all_approvals_raw["legacy"]
+                all_approvals["legacy"] = {
+                    "run_id": leg["run_id"],
+                    "approval_type": "legacy",
+                    "approver_role": leg["approver_role"],
+                    "approved_at": leg["approved_at"],
+                    "run_sha256": leg["run_sha256"],
+                    "exists": True,
+                }
+            if "exercise" in all_approvals_raw:
+                ex = all_approvals_raw["exercise"]
+                all_approvals["exercise"] = {
+                    "run_id": ex["run_id"],
+                    "approval_type": "exercise",
+                    "approver_role": ex["approver_role"],
+                    "approved_at": ex["approved_at"],
+                    "run_sha256": ex["run_sha256"],
+                    "exists": True,
+                }
+
+            return {
+                **run,
+                "approval": approval,
+                "all_approvals": all_approvals,
+                "run_sha256": run_sha256,
+                "approval_status": approval_status,
+                "has_legacy_approval": "legacy" in all_approvals_raw,
+                "has_exercise_approval": "exercise" in all_approvals_raw,
+            }
+        else:
+            # In dev mode, return exercise approval (or legacy) as authoritative; never enterprise
+            raw_ex = all_approvals_raw.get("exercise") or all_approvals_raw.get("legacy")
+            if raw_ex and raw_ex.get("run_sha256") == run_sha256:
+                approval = raw_ex
+                approval_status = f"{raw_ex['approval_type']}_approved"
+            elif raw_ex:
+                approval = None
+                approval_status = "digest_mismatch"
+            else:
+                approval = None
+                approval_status = "unapproved"
+
+            # Development responses must NEVER expose the authenticated account or notes from an enterprise approval
+            all_approvals = {}
+            if "exercise" in all_approvals_raw:
+                all_approvals["exercise"] = all_approvals_raw["exercise"]
+            if "legacy" in all_approvals_raw:
+                all_approvals["legacy"] = all_approvals_raw["legacy"]
+            if "enterprise" in all_approvals_raw:
+                ent = all_approvals_raw["enterprise"]
+                all_approvals["enterprise"] = {
+                    "run_id": ent["run_id"],
+                    "approval_type": "enterprise",
+                    "approver_role": ent["approver_role"],
+                    "approved_at": ent["approved_at"],
+                    "run_sha256": ent["run_sha256"],
+                    "exists": True,
+                }
+
+            return {
+                **run,
+                "approval": approval,
+                "all_approvals": all_approvals,
+                "run_sha256": run_sha256,
+                "approval_status": approval_status,
+                "has_legacy_approval": "legacy" in all_approvals_raw,
+                "has_exercise_approval": "exercise" in all_approvals_raw,
+                "has_enterprise_approval": "enterprise" in all_approvals_raw,
+            }
     except TopologyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -539,7 +614,8 @@ def export_dossier(
         try:
             run = dossier_run(run_id, topology_id, topology_version)
             digest = dossier_run_hash(run)
-            approval = repo.get_run_approval(run_id)
+            # In development mode, query ONLY exercise (or legacy) approval; NEVER return enterprise approval
+            approval = repo.get_run_approval(run_id, approval_type="exercise") or repo.get_run_approval(run_id, approval_type="legacy")
             if approval and approval["run_sha256"] != digest:
                 raise HTTPException(status_code=409, detail="Run integrity check failed.")
             return {
