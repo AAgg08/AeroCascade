@@ -143,6 +143,16 @@ This script demonstrates an end-to-end evaluation using **Scenario I: Optical Pa
 
 ---
 
+## Saved Workspaces
+
+Scenario selection, demand, trigger hour, node controls, FMEA settings, maturity levels, and the illustrative cost assumption save automatically in this browser on this device. Refreshing restores those inputs and creates a labeled browser preview. Run the simulation again for Python results. Export the exercise JSON to retain a completed run and its provenance.
+
+In **Topology & DES**, choose **Export workspace** to download a portable settings file. Use **Import workspace** on the receiving browser, review the scenario summary, then select **Load workspace**. Workspace files contain inputs. Use the exercise JSON for run results.
+
+Use **Getting started** for the workflow and **Reset current scenario settings** to restore the selected scenario's inputs. If storage is blocked or saved data is incompatible, the console shows a notice and remains usable.
+
+---
+
 ## Simulation Reproducibility
 
 AeroCascade is designed for deterministic and stochastic experiment reproducibility:

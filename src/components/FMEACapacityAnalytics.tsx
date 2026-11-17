@@ -32,6 +32,8 @@ export function FMEACapacityAnalytics() {
     isSimulating,
     activeRunMode,
     inputRevision,
+    costPerDelayedMovement,
+    setCostPerDelayedMovement,
   } = useCascadeStore();
 
   const isStale = inputRevision > (simulationResult.provenance?.input_revision ?? 0);
@@ -53,6 +55,10 @@ export function FMEACapacityAnalytics() {
   const triggerTimeLabel = resultTrigger === undefined
     ? undefined
     : `T+${String(resultTrigger).padStart(2, '0')}:00`;
+
+  const lostCapacity =
+    simulationResult.summary_kpis.estimated_lost_movement_capacity ??
+    simulationResult.summary_kpis.total_disrupted_movements;
 
   const capacityChartData = useMemo(() => {
     return simulationResult.hourly_capacity.map((pt) => {
@@ -147,6 +153,29 @@ export function FMEACapacityAnalytics() {
             >
               Unmitigated Stress
             </button>
+          </div>
+
+          {/* Cost Multiplier Setting (Illustrative Assumption) */}
+          <div
+            className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50/90 px-3.5 py-1.5 text-xs text-gray-700 shadow-inner"
+            title="Adjust illustrative cost assumption per movement to evaluate modeled disruption impact"
+          >
+            <span className="font-semibold text-gray-500 whitespace-nowrap">Cost / Mvmt (Assumed):</span>
+            <span className="text-gray-400 font-bold">$</span>
+            <input
+              type="number"
+              min={0}
+              step={500}
+              value={costPerDelayedMovement}
+              onChange={(e) => setCostPerDelayedMovement(Number(e.target.value))}
+              aria-label="Illustrative cost assumption per movement"
+              className="w-18 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-right font-bold text-gray-900 shadow-xs focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+            />
+            {lostCapacity > 0 && (
+              <span className="text-amber-700 font-bold pl-1.5 whitespace-nowrap border-l border-gray-200">
+                ≈ ${((lostCapacity * costPerDelayedMovement) / 1_000_000).toFixed(1)}M illustrative
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

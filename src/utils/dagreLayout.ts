@@ -32,8 +32,8 @@ export function buildDagreCascadeLayout(
   g.setGraph({
     rankdir: 'LR',
     align: 'UL',
-    nodesep: 48,
-    ranksep: 140,
+    nodesep: 73,
+    ranksep: 180,
     marginx: 36,
     marginy: 36,
   });
@@ -65,8 +65,8 @@ export function buildDagreCascadeLayout(
 
   const stageX: Record<CascadeStage, number> = {
     [CascadeStage.STAGE_1_TRIGGER]: 24,
-    [CascadeStage.STAGE_2_PROPAGATION]: 460,
-    [CascadeStage.STAGE_3_BLOCKER]: 896,
+    [CascadeStage.STAGE_2_PROPAGATION]: 514,
+    [CascadeStage.STAGE_3_BLOCKER]: 1004,
   };
 
   // Determine connected nodes to highlight active propagation paths from/to selectedNodeId
@@ -92,7 +92,7 @@ export function buildDagreCascadeLayout(
 
     colNodes.forEach((nodeModel, idx) => {
       const x = stageX[stageKey];
-      const y = 20 + idx * (NODE_HEIGHT + 24);
+      const y = 20 + idx * (NODE_HEIGHT + 49);
       const centrality = centralityMap[nodeModel.id];
 
       flowNodes.push({
@@ -123,27 +123,29 @@ export function buildDagreCascadeLayout(
       animated: isConnectedToSelected,
       label: `w=${e.coupling_weight.toFixed(2)}`,
       labelStyle: {
-        fill: isConnectedToSelected ? '#E2E8F0' : '#64748B',
+        fill: isConnectedToSelected ? '#111827' : '#6B7280',
         fontSize: 10,
-        fontFamily: 'JetBrains Mono, monospace',
-        fontWeight: 500,
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fontWeight: 600,
       },
       labelBgStyle: {
-        fill: '#0F172A',
-        fillOpacity: 0.92,
-        stroke: '#1E293B',
+        fill: '#FFFFFF',
+        fillOpacity: 0.96,
+        stroke: isConnectedToSelected ? '#D1D5DB' : '#E5E7EB',
         strokeWidth: 1,
+        rx: 6,
+        ry: 6,
       },
       labelBgPadding: [6, 3] as [number, number],
-      labelBgBorderRadius: 4,
+      labelBgBorderRadius: 6,
       style: {
         stroke: isConnectedToSelected
           ? isHighCoupling
             ? '#F59E0B'
-            : '#06B6D4'
-          : '#334155',
+            : '#0284C7'
+          : '#94A3B8',
         strokeWidth: isConnectedToSelected ? (isHighCoupling ? 2.5 : 2) : 1.25,
-        opacity: isConnectedToSelected ? 1 : 0.4,
+        opacity: isConnectedToSelected ? 1 : 0.45,
       },
     };
   });

@@ -14,6 +14,11 @@
     overflow-x: hidden;
   }
 
+  :where(button, a, input, select, summary):focus-visible {
+    outline: 2px solid #0369a1;
+    outline-offset: 3px;
+  }
+
   code, pre, .font-mono {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
